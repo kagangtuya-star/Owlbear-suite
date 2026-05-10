@@ -76,9 +76,15 @@ html,body{
 .reset-btn:active{transform:rotate(180deg)}
 .reset-btn.flash{opacity:1;color:#f5a623;transform:rotate(180deg)}
 .reset-btn svg{width:13px;height:13px;display:block;pointer-events:none}
-.root{padding:10px 12px;height:100%;overflow-y:auto}
-.root::-webkit-scrollbar{width:3px}
-.root::-webkit-scrollbar-thumb{background:rgba(255,255,255,.15);border-radius:2px}
+/* 2026-05-12 — scrollbar hidden (still scrollable via wheel/touch).
+   The 3px scrollbar was causing width jumps on tab switch that
+   stretched sibling components. */
+.root{
+  padding:10px 12px;height:100%;overflow-y:auto;
+  scrollbar-width:none;
+  -ms-overflow-style:none;
+}
+.root::-webkit-scrollbar{display:none;width:0;height:0}
 
 .hdr{display:flex;align-items:center;gap:8px;padding-bottom:6px;border-bottom:1px solid rgba(255,255,255,.1);margin-bottom:7px}
 .name{font-size:14px;font-weight:700;color:#f5a623;flex-shrink:0;max-width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}

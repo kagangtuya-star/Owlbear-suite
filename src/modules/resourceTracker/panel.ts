@@ -88,10 +88,39 @@ export function mountResourcePanel(opts: MountOptions): {
   const { container, getItemId, onChange } = opts;
   let currentRender: Resource[] = [];
   let lastSnapshotJson = "";
+  // 2026-05-12 — "we just touched it" window. Earlier round relied
+  // solely on JSON.stringify equality between optimistic snapshot and
+  // metadata echo to skip render(); user reported clicks still
+  // sometimes triggered a full re-render (innerHTML rewrite, scroll
+  // reset, slide animation replay). The snapshot-eq fast-path is
+  // probably fine in steady state but races on rapid clicks. This
+  // flag is set on every commit and held for ~800 ms — refresh()
+  // sees it and updates internal state from the echo without
+  // rebuilding the DOM, regardless of whether the JSON snapshots
+  // happen to align. External writes (other clients, edit modal
+  // save / delete, resource added) come AFTER this window expires
+  // and re-render normally.
+  let suppressRenderUntil = 0;
+  const SUPPRESS_RENDER_MS = 800;
 
   ensureStyles();
 
   const itemsUnsub = OBR.scene.items.onChange(() => { void refresh(); });
+
+  // Patch every row in `currentRender` against the live DOM without
+  // re-rendering. Used by the suppress-render path so external-shape
+  // drift (e.g. metadata roundtrip flips field order in JSON.stringify)
+  // doesn't visually leak — we still apply the canonical state to
+  // existing pills/bars/text but skip the innerHTML rewrite that
+  // would reset scroll position and replay the slide animation.
+  function patchAllRowsFromCurrent(): void {
+    for (const r of currentRender) {
+      // patchRow is a no-op when the row's DOM doesn't exist (e.g.
+      // first render before items.onChange fires), so this is safe
+      // to call defensively.
+      try { patchRow(r, null); } catch {}
+    }
+  }
 
   async function refresh(): Promise<void> {
     const id = getItemId();
@@ -106,14 +135,29 @@ export function mountResourcePanel(opts: MountOptions): {
     const item = items[0] ?? null;
     const next = readResources(item);
     const nextJson = JSON.stringify(next);
+    // Structural change check: did the SET of resource ids change?
+    // A new resource appearing or one being deleted MUST re-render
+    // (new row markup needs to be created); but a same-id-set with
+    // only value diffs can stay in the suppress-render path.
+    const prevIds = currentRender.map((r) => r.id).sort().join("|");
+    const nextIds = next.map((r) => r.id).sort().join("|");
+    const structureChanged = prevIds !== nextIds;
+    const inSuppressWindow = Date.now() < suppressRenderUntil;
+
     if (nextJson === lastSnapshotJson) {
-      // External / our-own commit landed; data identical to what's
-      // already on screen → skip the full innerHTML rewrite. This is
-      // the path that prevents flicker on click: we already mutated
-      // the DOM optimistically, the metadata write echoes back via
-      // items.onChange, the pulled state matches local state, no
-      // re-render fires.
+      // Snapshots match — fastest path. Fast-forward state and bail.
       currentRender = next;
+      return;
+    }
+    if (inSuppressWindow && !structureChanged) {
+      // We just committed a value mutation; the metadata echo is
+      // shaped slightly differently from our optimistic snapshot
+      // (field ordering, etc.) but the resource ID set is unchanged.
+      // Patch existing DOM nodes with the canonical values + skip
+      // render() to keep scroll position + slide state intact.
+      currentRender = next;
+      lastSnapshotJson = nextJson;
+      patchAllRowsFromCurrent();
       return;
     }
     currentRender = next;
@@ -425,6 +469,8 @@ export function mountResourcePanel(opts: MountOptions): {
         const final = currentRender.find((x) => x.id === r.id);
         if (final) {
           lastSnapshotJson = JSON.stringify(currentRender);
+          // Open suppress-render window for the metadata echo.
+          suppressRenderUntil = Date.now() + SUPPRESS_RENDER_MS;
           firePulse(el);
           onChange?.({ resourceName: r.name || "(未命名)", delta: lastApplied - startCurrent, current: lastApplied, max: r.max });
           void broadcastChanged(itemId, final, lastApplied - startCurrent, startCurrent);
@@ -498,13 +544,17 @@ export function mountResourcePanel(opts: MountOptions): {
     const nextRow: Resource = { ...r, current: next };
     currentRender = currentRender.map((x, i) => (i === idx ? nextRow : x));
     lastSnapshotJson = JSON.stringify(currentRender);
+    // Open the suppress-render window so the metadata echo doesn't
+    // trigger a full innerHTML rewrite (kills scroll position +
+    // replays the parent's slide animation).
+    suppressRenderUntil = Date.now() + SUPPRESS_RENDER_MS;
     // 2. Patch DOM in place + run pulse animation. No re-render.
     patchRow(nextRow, pulseEl);
     // 3. Notifier hook + room-wide toast broadcast.
     onChange?.({ resourceName: r.name || "(未命名)", delta, current: next, max: r.max });
     void broadcastChanged(itemId, nextRow, delta, r.current);
-    // 4. Persist. items.onChange echoes back; refresh() compares
-    //    JSON snapshots and skips the re-render path.
+    // 4. Persist. items.onChange echoes back; refresh() runs but
+    //    skips render() because we're in the suppress window.
     await updateResource(itemId, r.id, () => nextRow);
   }
 
@@ -695,40 +745,48 @@ function ensureStyles(): void {
     .rt-num-step:hover { background:rgba(93,173,226,0.15); border-color:rgba(93,173,226,0.45); color:#7ec8f0 }
     .rt-num-step:active { transform:scale(0.94) }
     .rt-num-step.rt-pulse { animation: rt-pulse 0.22s ease-out }
+    /* 2026-05-12 — orb redesign per user feedback. The previous round
+       wrapped the icon in a 48px circle; user wanted the icon plain.
+       Now the orb is just a transparent square sized to the icon, with
+       the number overlayed using a layered text-shadow stroke that
+       reads cleanly on any icon (the previous -webkit-text-stroke
+       approach displayed poorly because it stroked the FILL not the
+       outside, blurring the digit edges). */
     .rt-num-orb {
       justify-self:center;
       position:relative;
-      width:48px; height:48px;
+      width:44px; height:44px;
       display:inline-flex; align-items:center; justify-content:center;
-      background:radial-gradient(circle at 30% 30%, #3a3f55, #232636 70%);
-      border:2px solid rgba(255,255,255,0.18);
-      border-radius:50%;
       cursor:pointer;
-      box-shadow:0 3px 8px rgba(0,0,0,0.45), inset 0 1px 1px rgba(255,255,255,0.10);
-      transition:transform .12s ease, border-color .15s;
+      transition:transform .12s ease, filter .15s;
     }
-    .rt-num-orb:hover { border-color:rgba(93,173,226,0.65) }
-    .rt-num-orb:active { transform:scale(0.95) }
+    .rt-num-orb:hover { filter:brightness(1.18) }
+    .rt-num-orb:active { transform:scale(0.94) }
     .rt-num-orb-icon {
       position:absolute; inset:0;
       display:flex; align-items:center; justify-content:center;
       color:#cbd5e1;
     }
-    .rt-num-orb-icon svg { width:30px; height:30px; filter:drop-shadow(0 1px 2px rgba(0,0,0,0.5)) }
-    /* Number overlay — large, with stroke (-webkit-text-stroke) + a
-       text-shadow halo so it stays legible regardless of which icon
-       sits behind it. */
+    .rt-num-orb-icon svg { width:38px; height:38px; filter:drop-shadow(0 1px 2px rgba(0,0,0,0.65)) }
+    /* Number overlay — pure layered-shadow stroke. Eight 1-px solid
+       black offsets form a clean outline around the white digit; a
+       4-px soft halo behind that lifts it off coloured icons.
+       (-webkit-text-stroke was tried earlier; it strokes from the
+       inside out and clips the strokes against the glyph fill,
+       producing a thin/uneven look. Layered text-shadow stays
+       outside the fill and reads sharp.) */
     .rt-num-orb-val {
       position:absolute; inset:0;
       display:flex; align-items:center; justify-content:center;
       font-family:ui-monospace,Consolas,monospace;
       font-size:18px; font-weight:900;
       color:#fff;
-      -webkit-text-stroke:2px #1f2230;
-      text-stroke:2px #1f2230;
       text-shadow:
-        0 0 3px rgba(0,0,0,0.95),
-        0 1px 2px rgba(0,0,0,0.8);
+        -1px -1px 0 #000, 1px -1px 0 #000,
+        -1px  1px 0 #000, 1px  1px 0 #000,
+        -1px  0   0 #000, 1px  0   0 #000,
+         0  -1px 0 #000, 0   1px 0 #000,
+         0 0 4px rgba(0,0,0,0.95);
       font-variant-numeric:tabular-nums;
       pointer-events:none;
     }

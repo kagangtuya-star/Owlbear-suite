@@ -29,9 +29,17 @@ html,body{
   pointer-events:auto;
 }
 
-.root{padding:10px 14px;height:100%;overflow-y:auto}
-.root::-webkit-scrollbar{width:3px}
-.root::-webkit-scrollbar-thumb{background:rgba(255,255,255,.15);border-radius:2px}
+/* 2026-05-12 — scrollbar hidden. Earlier round used a thin 3px
+   scrollbar; user reported its appearance/disappearance during tab
+   switch caused width to jump and stretched siblings. Hiding the
+   scrollbar entirely (still scrollable via wheel / touch) keeps the
+   content width stable across tab switches. */
+.root{
+  padding:10px 14px;height:100%;overflow-y:auto;
+  scrollbar-width:none;          /* Firefox */
+  -ms-overflow-style:none;       /* old IE/Edge */
+}
+.root::-webkit-scrollbar{display:none;width:0;height:0}
 
 .hdr{display:flex;align-items:center;gap:10px;padding-bottom:6px;border-bottom:1px solid rgba(255,255,255,.1);margin-bottom:7px}
 /* Drag grip (top-left of header). Pointer events route through
