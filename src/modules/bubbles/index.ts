@@ -916,8 +916,19 @@ function computeLayoutFromMetrics(
   //     shield extends `diameter/2` to either side of that line,
   //     so half overlaps the bar and half sticks out to the right.
   const diameter = overheadMode ? barHeight * 1.21 : DIAMETER * s;
-  const bubbleFontSize = overheadMode ? barFontSize : BUBBLE_FONT_SIZE * s;
-  const bubbleFontSizeTight = overheadMode ? barFontSize * 0.7 : BUBBLE_FONT_SIZE_TIGHT * s;
+  // 2026-05-13e — Overhead shield text was using `barFontSize` (= 22*s),
+  // which is way too big for the shield's 24.2*s diameter: 2-digit
+  // numbers like "16" + the bold stroke wrap onto a second line and
+  // clip out of the bbox. User: "护盾中的文字缩小，目前强行换行了
+  // 并且显示不全。保证至少两位数时可以正常显示."
+  //
+  // Match the standard-mode proportions (BUBBLE_FONT_SIZE = DIAMETER -
+  // 8 = 73% of diameter; BUBBLE_FONT_SIZE_TIGHT = 50% for 3-digit).
+  // Standard mode is empirically tested for 2-digit legibility, so the
+  // same ratio on overhead's diameter guarantees 2-digit fits without
+  // wrap.
+  const bubbleFontSize = overheadMode ? diameter * (22 / 30) : BUBBLE_FONT_SIZE * s;
+  const bubbleFontSizeTight = overheadMode ? diameter * (15 / 30) : BUBBLE_FONT_SIZE_TIGHT * s;
   const bubbleTextOffset = TEXT_VERTICAL_OFFSET * s;
   const totalSpan = Math.max(barHeight, renderedWidth - barPadding * 2);
 
