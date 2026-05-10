@@ -907,30 +907,39 @@ function computeLayoutFromMetrics(
   const barStrokeOpacity = overheadMode ? 0.7 : 0;
   const barFontSize = BAR_FONT_SIZE * s;
   const barTextOffset = TEXT_VERTICAL_OFFSET * s;
-  // 2026-05-13 — overhead mode forces the inline icons (AC + Temp HP)
-  // to match the bar's height so they read as a single unit. Standard
-  // mode keeps the larger 30-base diameter for the above-bar circles.
-  const diameter = overheadMode ? barHeight : DIAMETER * s;
+  // 2026-05-13b — overhead mode revisions per user spec:
+  //   • Shield is 10% LARGER than bar height (was equal). Visually
+  //     reads as "the shield slightly overflows the bar's vertical
+  //     edges", same vibe as a real shield clipped to a banner.
+  //   • Shield OVERLAPS the right end of the bar (covers part of it)
+  //     instead of being appended to the right. So the BAR itself
+  //     can take the full available width and stay centred on the
+  //     token. inlineFootprint is no longer added to the bar's
+  //     horizontal allocation.
+  const diameter = overheadMode ? barHeight * 1.1 : DIAMETER * s;
   const bubbleFontSize = overheadMode ? barFontSize : BUBBLE_FONT_SIZE * s;
   const bubbleFontSizeTight = overheadMode ? barFontSize * 0.7 : BUBBLE_FONT_SIZE_TIGHT * s;
   const bubbleTextOffset = TEXT_VERTICAL_OFFSET * s;
   const totalSpan = Math.max(barHeight, renderedWidth - barPadding * 2);
 
-  // === Inline icon footprint (overhead mode only) ====================
-  // In overhead mode, AC + Temp HP take up part of the totalSpan to the
-  // right of the bar. Bar width shrinks to fit. In standard mode, AC +
-  // Temp HP float in a separate row above the bar, so bar takes the
-  // whole totalSpan.
+  // === Inline icon footprint ============================================
+  // Overhead mode: AC + Temp HP overlap the right end of the bar. They
+  // no longer take a separate horizontal slot — the bar stays full-
+  // width (= totalSpan) and centred. inlineFootprint is computed for
+  // the TEXT bbox math only (so HP text doesn't run under the shield).
+  // Standard mode: icons float above the bar in a separate row.
   const showHp = data.maxHp > 0;
   const inlineGap = 2 * s;
   const acSlotW = overheadMode && data.ac != null ? diameter : 0;
   const tempSlotW = overheadMode && data.tempHp > 0 && showHp ? diameter : 0;
   const inlineSlotsTotal = acSlotW + tempSlotW
     + (acSlotW > 0 && tempSlotW > 0 ? inlineGap : 0);
+  // Footprint reserved AT THE RIGHT END of the bar for the overlapping
+  // shield + temp HP. Used to shrink the text-bbox width so HP digits
+  // stay clear of the shield.
   const inlineFootprint = inlineSlotsTotal > 0 ? inlineSlotsTotal + inlineGap : 0;
-  const barWidth = overheadMode
-    ? Math.max(barHeight * 2, totalSpan - inlineFootprint)
-    : totalSpan;
+  // Bar always takes the full totalSpan (centred on token).
+  const barWidth = totalSpan;
 
   // === Vertical positioning ==========================================
   // Standard:  bar sits below the token (legacy layout).
@@ -964,16 +973,23 @@ function computeLayoutFromMetrics(
   let acCenter: Vector2 | null = null;
   let tempCenter: Vector2 | null = null;
   if (overheadMode) {
-    // Inline at the right end of the bar, vertically centered.
-    // Order left-to-right: [BAR] [TEMP] [AC] (AC rightmost per spec).
+    // 2026-05-13b — OVERLAP layout. Icons sit ON TOP of the bar's
+    // right end, vertically centred with the bar. AC rightmost, the
+    // shield's right edge flush with the bar's right edge. Temp HP
+    // (if any) sits just to the left of AC, also overlapping the bar.
     const inlineY = barOrigin.y + barHeight / 2;
-    let cursorX = barOrigin.x + barWidth + inlineGap;
-    if (data.tempHp > 0 && showHp) {
-      tempCenter = { x: cursorX + diameter / 2, y: inlineY };
-      cursorX += diameter + inlineGap;
-    }
+    const barRightX = barOrigin.x + barWidth;
+    // AC: its visual right edge aligns with bar's right edge.
+    //     Since shield is 10% larger than barHeight, it sticks out
+    //     vertically a touch (intended — reads as "shield slightly
+    //     larger than the banner").
+    let nextRightEdge = barRightX;
     if (data.ac != null) {
-      acCenter = { x: cursorX + diameter / 2, y: inlineY };
+      acCenter = { x: nextRightEdge - diameter / 2, y: inlineY };
+      nextRightEdge -= diameter + inlineGap;
+    }
+    if (data.tempHp > 0 && showHp) {
+      tempCenter = { x: nextRightEdge - diameter / 2, y: inlineY };
     }
   } else {
     // Standard layout — float above the bar.
@@ -992,6 +1008,14 @@ function computeLayoutFromMetrics(
     }
   }
 
+  // 2026-05-13b — In overhead mode the shield + temp HP sit ON the
+  // bar at the right end (overlap layout). Shrink the text bbox by
+  // the inline footprint so HP digits stay clear of the shield. Then
+  // shift the text bbox left by half the footprint so the remaining
+  // text region stays centred under the BAR's centre (not the
+  // bar+overlap span's centre).
+  const barTextBoxWidth = overheadMode ? Math.max(barHeight, barWidth - inlineFootprint) : barWidth;
+
   return {
     flipX: 1, flipY: 1,
     origin, barOrigin, barWidth,
@@ -1001,7 +1025,7 @@ function computeLayoutFromMetrics(
     tokenScale: t,
     overheadMode,
     barStrokeWidth, barStrokeOpacity,
-    barTextBoxWidth: barWidth,
+    barTextBoxWidth,
   };
 }
 
@@ -1142,6 +1166,10 @@ function buildBarText(ctx: BuildContext, L: BarLayout, data: BubbleData): any {
   // dominate the glyphs on a tiny familiar (was a fixed 1.5 px →
   // looked like a black blob at small scale).
   const strokeWidth = Math.max(0.4, L.barHeight * 0.075);
+  // 2026-05-13b — text bbox uses barTextBoxWidth (= barWidth in
+  // standard mode, = barWidth - inlineFootprint in overhead mode).
+  // In overhead the inline icons overlap the right end of the bar;
+  // narrowing the text bbox keeps HP digits clear of the shield.
   return buildText()
     .plainText(text)
     .textType("PLAIN")
@@ -1156,7 +1184,7 @@ function buildBarText(ctx: BuildContext, L: BarLayout, data: BubbleData): any {
     .strokeOpacity(0.7)
     .strokeWidth(strokeWidth)
     .lineHeight(0.95)
-    .width(L.barWidth)
+    .width(L.barTextBoxWidth)
     .height(L.barHeight)
     .position({ x: L.barOrigin.x, y: L.barOrigin.y + L.barTextOffset })
     .layer("TEXT")
@@ -1178,12 +1206,14 @@ function buildStatBubbleBg(ctx: BuildContext, L: BarLayout, center: Vector2, col
   // zIndex works; using 26000 unconditionally keeps the math simple.
   // Shape CIRCLE position is the bubble's CENTER (verified empirically
   // against the upstream's positioning math).
+  // 2026-05-13b — overhead mode renders fully opaque ("护盾不再半透
+  // 明"); standard mode keeps the original BG_OPACITY (0.6).
   return buildShape()
     .shapeType("CIRCLE")
     .width(L.diameter)
     .height(L.diameter)
     .fillColor(color)
-    .fillOpacity(BG_OPACITY)
+    .fillOpacity(L.overheadMode ? 1.0 : BG_OPACITY)
     .strokeColor(color)
     .strokeOpacity(0)
     .strokeWidth(0)
@@ -1217,9 +1247,11 @@ function buildAcShield(ctx: BuildContext, L: BarLayout, center: Vector2, color: 
   // so canonical top-left = center − diameter/2.
   const W = L.diameter;
   const H = L.diameter;
+  // 2026-05-13b — overhead mode renders fully opaque per user spec
+  // ("护盾不再半透明"); standard mode keeps the translucent 0.6.
   return buildCurve()
     .fillColor(color)
-    .fillOpacity(BG_OPACITY)
+    .fillOpacity(L.overheadMode ? 1.0 : BG_OPACITY)
     .strokeColor("#ffffff")
     .strokeOpacity(0.45)
     .strokeWidth(Math.max(0.6, L.diameter * 0.04))
@@ -1379,9 +1411,13 @@ async function patchGeometry(patches: Array<{ entry: BubbleEntry; w: Wanted }>):
             // text stuck at "20/66". Reassigning the whole object
             // forces the partial-update path to ship the change.
             const newText = `${w.data.hp}/${w.data.maxHp}${w.data.tempHp > 0 ? ` +${w.data.tempHp}` : ""}`;
+            // 2026-05-13b — text width = barTextBoxWidth so overhead-
+            // mode patches keep HP digits clear of the overlapping
+            // shield. Standard mode is unchanged (barTextBoxWidth ==
+            // barWidth there).
             da.text = {
               ...da.text,
-              width: L.barWidth,
+              width: L.barTextBoxWidth,
               height: L.barHeight,
               plainText: newText,
               style: {

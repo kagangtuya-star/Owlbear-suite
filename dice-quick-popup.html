@@ -38,14 +38,23 @@ html,body{
   background:var(--bg);
   border:1px solid var(--border-strong);
   border-radius:10px;
-  padding:14px 12px 10px;
+  padding:8px 12px 10px;
   box-shadow:0 12px 36px rgba(0,0,0,0.55);
   user-select:none;-webkit-user-select:none;
   display:flex;flex-direction:column;gap:8px;
   overflow:hidden;
 }
+/* 2026-05-13b — close button now participates in layout (was
+   position:absolute overlaying the dice row, which the user
+   correctly flagged as "没有参与排版"). A flex row at the top
+   right-aligns the X so the dice grid below sits under it without
+   overlap. */
+.popup-hdr{
+  display:flex;align-items:center;justify-content:flex-end;
+  gap:6px; height:22px;
+  margin:0 -4px 0 0;
+}
 .close-x{
-  position:absolute;top:6px;right:8px;
   width:22px;height:22px;
   background:transparent;border:none;
   color:var(--text-dim);
@@ -54,7 +63,7 @@ html,body{
   border-radius:4px;
   display:flex;align-items:center;justify-content:center;
   transition:background .12s, color .12s;
-  z-index:2;
+  padding:0;
 }
 .close-x:hover{background:rgba(255,255,255,0.08);color:var(--text)}
 
@@ -205,7 +214,9 @@ html,body{
 </head>
 <body>
 <div class="popup">
-  <button class="close-x" id="closeBtn" type="button" title="关闭 / Close" aria-label="关闭">×</button>
+  <div class="popup-hdr">
+    <button class="close-x" id="closeBtn" type="button" title="关闭 / Close" aria-label="关闭">×</button>
+  </div>
   <!-- 7-dice picker — left=+1, right=-1. -->
   <div class="dice-row" id="diceRow">
     <button class="dice-btn" data-type="d4"   type="button" title="左键 +1，右键 −1"><img src="/suite/d4.png"   alt="d4"   draggable="false"><span class="lbl">d4</span><span class="badge">0</span></button>
