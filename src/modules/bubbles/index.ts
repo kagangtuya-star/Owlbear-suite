@@ -923,23 +923,27 @@ function computeLayoutFromMetrics(
   const totalSpan = Math.max(barHeight, renderedWidth - barPadding * 2);
 
   // === Inline icon footprint ============================================
-  // Overhead mode: AC + Temp HP overlap the right end of the bar. They
-  // no longer take a separate horizontal slot — the bar stays full-
-  // width (= totalSpan) and centred. inlineFootprint is computed for
-  // the TEXT bbox math only (so HP text doesn't run under the shield).
   // Standard mode: icons float above the bar in a separate row.
+  // Overhead mode: per user spec (2026-05-13c) the BAR length matches
+  // the prior 1.0.105 release — short enough that bar + icons fit
+  // inside totalSpan even though the icons now OVERLAP the bar (rather
+  // than being appended). Centring keeps the bar's geometric centre
+  // on the token's centre. Text bbox = full bar width (also matching
+  // 1.0.105 — user said "文字同样也是").
   const showHp = data.maxHp > 0;
   const inlineGap = 2 * s;
   const acSlotW = overheadMode && data.ac != null ? diameter : 0;
   const tempSlotW = overheadMode && data.tempHp > 0 && showHp ? diameter : 0;
   const inlineSlotsTotal = acSlotW + tempSlotW
     + (acSlotW > 0 && tempSlotW > 0 ? inlineGap : 0);
-  // Footprint reserved AT THE RIGHT END of the bar for the overlapping
-  // shield + temp HP. Used to shrink the text-bbox width so HP digits
-  // stay clear of the shield.
-  const inlineFootprint = inlineSlotsTotal > 0 ? inlineSlotsTotal + inlineGap : 0;
-  // Bar always takes the full totalSpan (centred on token).
-  const barWidth = totalSpan;
+  // 1.0.105 used `inlineSlotsTotal + inlineGap` as the bar's shrinkage
+  // (the +inlineGap was the gap between bar and the appended shield).
+  // Keep the same number now so the bar's PROPORTIONAL length matches
+  // 1.0.105.
+  const barShrink = inlineSlotsTotal > 0 ? inlineSlotsTotal + inlineGap : 0;
+  const barWidth = overheadMode
+    ? Math.max(barHeight * 2, totalSpan - barShrink)
+    : totalSpan;
 
   // === Vertical positioning ==========================================
   // Standard:  bar sits below the token (legacy layout).
@@ -956,7 +960,10 @@ function computeLayoutFromMetrics(
     const topOfToken = centerY - renderedHeight / 2;
     const barTopY = topOfToken - overheadGap - barHeight + verticalOffset;
     origin = { x: centerX, y: topOfToken };
-    barOrigin = { x: centerX - totalSpan / 2, y: barTopY };
+    // 2026-05-13c — bar centred on TOKEN (not on totalSpan). barWidth
+    // is the shrunken 1.0.105-proportion length so the icons can
+    // overlap inside totalSpan without pushing the bar off-centre.
+    barOrigin = { x: centerX - barWidth / 2, y: barTopY };
   } else {
     const effectiveVerticalOffset = offsetByText
       ? -TOKEN_TEXT_FONT_BASE * t
@@ -1008,13 +1015,12 @@ function computeLayoutFromMetrics(
     }
   }
 
-  // 2026-05-13b — In overhead mode the shield + temp HP sit ON the
-  // bar at the right end (overlap layout). Shrink the text bbox by
-  // the inline footprint so HP digits stay clear of the shield. Then
-  // shift the text bbox left by half the footprint so the remaining
-  // text region stays centred under the BAR's centre (not the
-  // bar+overlap span's centre).
-  const barTextBoxWidth = overheadMode ? Math.max(barHeight, barWidth - inlineFootprint) : barWidth;
+  // 2026-05-13c — text bbox matches the BAR's width (was narrowed in
+  // 1.0.106 to avoid the overlapping shield, but the user explicitly
+  // wanted "文字同样也是 [上一个版本的长度比例]". HP text is on layer
+  // TEXT at zIndex 30000, above the shield at 26000, so if the digits
+  // do overflow into the shield area they draw on top — fine.
+  const barTextBoxWidth = barWidth;
 
   return {
     flipX: 1, flipY: 1,
