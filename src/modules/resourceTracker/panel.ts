@@ -176,35 +176,76 @@ export function mountResourcePanel(opts: MountOptions): {
     const next = readResources(item);
     const nextJson = JSON.stringify(next);
     if (nextJson === lastSnapshotJson) {
-      // Identical state — fast bail.
       currentRender = next;
       return;
     }
-    // 2026-05-12 — strictly avoid innerHTML rewrite when only values
-    // changed. Earlier round used a 800 ms "suppress" window; user
-    // reported flicker still happening so the suppress fallback was
-    // either racing (window expired before echo arrived in some
-    // cases) or the JSON snapshots failed to match for reasons
-    // unrelated to suppression. Now we make it unconditional: if
-    // the .rt-list DOM exists AND the resource ID set is unchanged,
-    // we patch values in place and never touch innerHTML. Only adds
-    // / deletes (set-of-ids changed) and cold-start (no DOM yet)
-    // take the full render path.
-    const prevIds = currentRender.map((r) => r.id).sort().join("|");
-    const nextIds = next.map((r) => r.id).sort().join("|");
-    const structureChanged = prevIds !== nextIds;
-    const haveListDom = !!container.querySelector(".rt-list");
-    void suppressRenderUntil; // legacy, no longer drives the gate
+    void suppressRenderUntil; // legacy field, no longer drives the gate.
 
-    if (haveListDom && !structureChanged && next.length > 0) {
+    // 2026-05-12 — ALL refresh paths now update the DOM incrementally
+    // when possible. Earlier rounds went through a full innerHTML
+    // rewrite for adds/deletes which the user reported as visible
+    // flicker. New flow:
+    //   1. List DOM doesn't exist OR transitioning to/from empty
+    //      → full render() (cold start path).
+    //   2. Otherwise diff by id:
+    //      • Remove rows whose id is gone.
+    //      • Append rows whose id is new (bind events on the
+    //        appended row only).
+    //      • Patch all surviving rows in place.
+    //   No global innerHTML rewrite ever happens once a list is on
+    //   screen, regardless of whether the change was a value tweak,
+    //   an add, or a delete.
+
+    const list = container.querySelector<HTMLElement>(".rt-list");
+    const wasEmpty = currentRender.length === 0;
+    const isEmpty = next.length === 0;
+
+    if (!list || (wasEmpty && !isEmpty) || (!wasEmpty && isEmpty)) {
+      // No live list yet, or transitioning between empty / non-empty
+      // → full render. (Cold start, last resource removed, first
+      // resource added on a previously-empty token.)
       currentRender = next;
       lastSnapshotJson = nextJson;
-      patchAllRowsFromCurrent();
+      render();
       return;
     }
+
+    // === Incremental diff path ===========================================
+
+    const prevById = new Map(currentRender.map((r) => [r.id, r]));
+    const nextById = new Map(next.map((r) => [r.id, r]));
+
+    // 1. Remove rows whose id disappeared from `next`.
+    for (const id of prevById.keys()) {
+      if (!nextById.has(id)) {
+        const row = list.querySelector<HTMLElement>(`.rt-row[data-id="${cssEscape(id)}"]`);
+        row?.remove();
+      }
+    }
+
+    // 2. Append rows whose id is new. Insert in the order they
+    //    appear in `next` (already sorted by `order`) — we walk
+    //    next, and for each new row append it in sequence.
+    const sorted = [...next].sort((a, b) => {
+      const oa = a.order ?? Number.MAX_SAFE_INTEGER;
+      const ob = b.order ?? Number.MAX_SAFE_INTEGER;
+      return oa - ob;
+    });
+    for (const r of sorted) {
+      let row = list.querySelector<HTMLElement>(`.rt-row[data-id="${cssEscape(r.id)}"]`);
+      if (!row) {
+        const tmp = document.createElement("div");
+        tmp.innerHTML = renderResourceRow(r);
+        row = tmp.firstElementChild as HTMLElement;
+        list.appendChild(row);
+        bindRowEvents(row);
+      }
+    }
+
+    // 3. Update internal state + patch every surviving row.
     currentRender = next;
     lastSnapshotJson = nextJson;
-    render();
+    patchAllRowsFromCurrent();
   }
 
   function render(): void {
@@ -386,50 +427,55 @@ export function mountResourcePanel(opts: MountOptions): {
 
   // --- event wiring --------------------------------------------------------
 
-  function bindRowEvents(): void {
+  // 2026-05-12 — bindRowEvents factored to bind on a SCOPE element
+  // (default: container). Lets the partial-DOM-update path bind
+  // handlers on a freshly-appended single row without touching the
+  // already-bound rows. The "+ 新增资源" button binding stays
+  // attached to the container's last child (only one of those).
+  function bindRowEvents(scope?: HTMLElement): void {
     const id = getItemId();
     if (!id) return;
-    container.querySelectorAll<HTMLElement>('[data-action="count-toggle"]').forEach((el) => {
+    const root = scope ?? container;
+    root.querySelectorAll<HTMLElement>('[data-action="count-toggle"]').forEach((el) => {
       el.addEventListener("click", () => void onCountClick(id, el));
       el.addEventListener("contextmenu", (e) => { e.preventDefault(); void onCountReset(id, el); });
     });
-    // Bar = drag-anywhere on the bar to set progress. Pointer events
-    // give us pointerdown / pointermove / pointerup with capture so a
-    // drag that exits the bar still tracks. Right-click = +1 / fill.
-    container.querySelectorAll<HTMLElement>('[data-action="bar-drag"]').forEach((el) => {
+    root.querySelectorAll<HTMLElement>('[data-action="bar-drag"]').forEach((el) => {
       el.addEventListener("pointerdown", (e) => onBarPointerDown(id, el, e as PointerEvent));
       el.addEventListener("contextmenu", (e) => {
         e.preventDefault();
         void onBarRightClick(id, el);
       });
     });
-    // Number ±/orb buttons.
-    container.querySelectorAll<HTMLElement>('[data-action="num-step"]').forEach((el) => {
+    root.querySelectorAll<HTMLElement>('[data-action="num-step"]').forEach((el) => {
       el.addEventListener("click", () => {
         const dir = el.dataset.dir === "+1" ? 1 : -1;
         void onNumberStep(id, el, dir as 1 | -1);
       });
     });
-    container.querySelectorAll<HTMLElement>('[data-action="num-orb"]').forEach((el) => {
-      // Click → if 0, refill to max; else decrement by 1.
+    root.querySelectorAll<HTMLElement>('[data-action="num-orb"]').forEach((el) => {
       el.addEventListener("click", () => void onNumberOrbClick(id, el));
       el.addEventListener("contextmenu", (e) => {
         e.preventDefault();
         void onNumberOrbReset(id, el);
       });
     });
-    // Click min/max labels jumps the current to that bound.
-    container.querySelectorAll<HTMLElement>('[data-num-end]').forEach((el) => {
+    root.querySelectorAll<HTMLElement>('[data-num-end]').forEach((el) => {
       el.addEventListener("click", () => void onNumberEndJump(id, el));
     });
-    container.querySelectorAll<HTMLButtonElement>(".rt-row-edit").forEach((b) => {
+    root.querySelectorAll<HTMLButtonElement>(".rt-row-edit").forEach((b) => {
       b.addEventListener("click", () => {
         const rid = b.dataset.editId ?? "";
         const r = currentRender.find((x) => x.id === rid);
         if (r) openEdit(r);
       });
     });
-    container.querySelector<HTMLButtonElement>(".rt-add")?.addEventListener("click", () => openCreate());
+    // The "+ 新增资源" button only ever has one instance — bind on
+    // the unscoped container so re-binds during partial updates
+    // don't multiply listeners.
+    if (!scope) {
+      container.querySelector<HTMLButtonElement>(".rt-add")?.addEventListener("click", () => openCreate());
+    }
   }
 
   // --- click reducers ------------------------------------------------------

@@ -389,12 +389,17 @@ button.name.name-btn:disabled{opacity:0.5;cursor:wait}
    the panel background; only the buttons themselves carry weight,
    and a sliding indicator translates smoothly between them on hover. */
 .rt-tabstrip{
-  position:relative;
+  /* 2026-05-12 — sticky to top of the scrollable .root, just below
+     the also-sticky stat-banner (HP / AC). User wanted "和血条一样
+     的冻结顶部" — the strip stays visible while the user scrolls
+     through long attribute / resource content. */
+  position:sticky;
+  top:36px;          /* roughly stat-banner height; bumped above */
+  z-index:19;
+  background:rgba(22,33,62,0.94);
+  backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px);
   display:flex; gap:0;
-  padding:0; margin:0;
-  background:transparent; border:none;
-  /* A subtle top + bottom hairline blends it with the surrounding
-     content without making the strip feel like a discrete container. */
+  padding:0; margin:0 -2px 0;   /* extend beyond .root padding so the bg covers full width */
   border-top:1px solid rgba(255,255,255,0.06);
   border-bottom:1px solid rgba(255,255,255,0.06);
 }
@@ -436,21 +441,26 @@ button.name.name-btn:disabled{opacity:0.5;cursor:wait}
    is JS-driven (matches the active pane's offsetHeight) so it
    collapses / grows in lock-step with content. */
 .rt-clip{
+  /* 2026-05-12 — REWRITE: grid-overlap instead of position:absolute
+     panes. Both panes occupy the same grid cell; cell sizes
+     naturally to max(active.height, inactive.height). Eliminates
+     the JS-driven inline height (no more updateClipHeight + the
+     ResizeObserver that fired on every patchRow's transient
+     subpixel reflow), which is what was causing the user-reported
+     "click resource → whole pane blinks / scrolls back to attr".
+     The slide animation (transform: translateX) still works on the
+     panes because they're in the same coordinate space. Trade-off:
+     clip is always tall enough for the LARGER pane, even when
+     the active pane is shorter. Acceptable. */
   position:relative;
   overflow:hidden;
   width:100%;
-  /* 2026-05-11 — speed bump 0.35 → 0.1s + `contain` to keep the
-     pane's transform from triggering width re-flow on adjacent
-     siblings (user reported "其他组件被突兀拉长/缩短" during the
-     slide). `contain: layout paint` isolates the clip's internal
-     layout from the rest of the document so an in-flight pane
-     translate can't ripple outward through bounding-box math. */
+  display:grid;
+  grid-template-columns:100%;
   contain:layout paint;
-  transition:height .1s ease-out !important;
 }
 .rt-pane{
-  position:absolute;
-  top:0; left:0;
+  grid-area:1 / 1;        /* both panes overlap in the single grid cell */
   width:100%;
   transition:transform .1s ease-out, opacity .1s ease-out !important;
 }

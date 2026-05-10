@@ -553,15 +553,16 @@ button.name.name-btn:disabled{opacity:0.5;cursor:wait}
   100% {background:rgba(255,255,255,0.06); transform:scale(1)}
 }
 
-/* Resource-tracker tab strip — same look as bestiary monster-info:
-   transparent background, hairlines top + bottom, sliding indicator
-   that translates between buttons on hover. Sits BELOW the
-   stat-banner so name + HP / AC stay always-visible above. */
+/* Resource-tracker tab strip — sticky to top of the scrollable .root,
+   2026-05-12, just below the also-sticky stat-banner. */
 .rt-tabstrip{
-  position:relative;
+  position:sticky;
+  top:36px;          /* stat-banner height */
+  z-index:19;
+  background:rgba(31,33,48,0.94);
+  backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px);
   display:flex; gap:0;
-  padding:0; margin:0;
-  background:transparent; border:none;
+  padding:0; margin:0 -2px 0;
   border-top:1px solid rgba(255,255,255,0.06);
   border-bottom:1px solid rgba(255,255,255,0.06);
 }
@@ -598,18 +599,19 @@ button.name.name-btn:disabled{opacity:0.5;cursor:wait}
    ResizeObserver so collapse-on-empty / grow-on-resource-add works
    smoothly. */
 .rt-clip{
+  /* 2026-05-12 grid-overlap layout. See bestiary-monster-info.html
+     for full rationale — eliminates JS-driven inline height + the
+     ResizeObserver thrash that was causing flicker on every resource
+     click. */
   position:relative;
   overflow:hidden;
   width:100%;
-  /* `contain` isolates layout from the rest of the document so an
-     in-flight pane translate can't ripple outward and stretch
-     siblings. 0.35→0.1s for snappier feel. */
+  display:grid;
+  grid-template-columns:100%;
   contain:layout paint;
-  transition:height .1s ease-out !important;
 }
 .rt-pane{
-  position:absolute;
-  top:0; left:0;
+  grid-area:1 / 1;
   width:100%;
   transition:transform .1s ease-out, opacity .1s ease-out !important;
 }

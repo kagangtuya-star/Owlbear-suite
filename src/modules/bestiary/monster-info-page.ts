@@ -932,28 +932,13 @@ function setupTabSwitching(): void {
   const findActiveButton = (): HTMLElement | null =>
     strip.querySelector<HTMLElement>(`.rt-tab[data-rt-tab="${activeRtTab}"]`);
 
-  // === Slide-clip height tracking ==========================================
-  //
-  // Both panes are absolutely positioned inside the clip (so the
-  // inactive pane can sit at translateX(±100%) without contributing
-  // to layout height). The clip itself needs an explicit height
-  // matching the active pane, otherwise it collapses to 0. We
-  // measure offsetHeight on switch + via ResizeObserver so the clip
-  // grows / shrinks smoothly when content changes (e.g. a new
-  // resource is added).
-  const updateClipHeight = () => {
-    if (!clip) return;
-    const active = clip.querySelector<HTMLElement>(`.rt-pane[data-pane="${activeRtTab}"]`);
-    if (active) clip.style.height = `${active.offsetHeight}px`;
-  };
-  if (clip) {
-    requestAnimationFrame(updateClipHeight);
-    // Re-measure when either pane's intrinsic height changes (resource
-    // added, ability score row reflows, etc).
-    const ro = new ResizeObserver(() => updateClipHeight());
-    clip.querySelectorAll<HTMLElement>(".rt-pane").forEach((p) => ro.observe(p));
-  }
-
+  // 2026-05-12 — removed the JS-driven inline-height + ResizeObserver.
+  // .rt-clip now uses CSS grid (both panes overlap in a single grid
+  // cell that sizes naturally to max(active, inactive) height) so we
+  // never touch clip.style.height. The earlier round's ResizeObserver
+  // was firing on every patchRow's transient subpixel reflow → tiny
+  // height changes → CSS height transition → user-perceived flicker
+  // on every resource click. Grid kills that loop entirely.
   requestAnimationFrame(() => moveIndicatorTo(findActiveButton()));
 
   const switchTo = (next: RtTabId) => {
@@ -962,10 +947,8 @@ function setupTabSwitching(): void {
     buttons.forEach((b) => b.classList.toggle("on", b.dataset.rtTab === next));
     moveIndicatorTo(findActiveButton());
     // Drive the horizontal slide by flipping the clip's data-active.
-    // CSS handles the `transform:translateX` on .rt-pane based on
-    // [data-active] selectors.
+    // CSS handles the `transform:translateX` on .rt-pane.
     if (clip) clip.setAttribute("data-active", next);
-    updateClipHeight();
     if (next === "res") void ensureResourceMount();
   };
 

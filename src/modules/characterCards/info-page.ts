@@ -88,19 +88,10 @@ function setupRtTabSwitching(): void {
   const findActiveButton = (): HTMLElement | null =>
     strip.querySelector<HTMLElement>(`.rt-tab[data-rt-tab="${activeRtTab}"]`);
 
-  // Slide-clip height tracking (panes are absolutely positioned, so
-  // the clip would collapse to 0 without explicit height).
-  const updateClipHeight = () => {
-    if (!clip) return;
-    const active = clip.querySelector<HTMLElement>(`.rt-pane[data-pane="${activeRtTab}"]`);
-    if (active) clip.style.height = `${active.offsetHeight}px`;
-  };
-  if (clip) {
-    requestAnimationFrame(updateClipHeight);
-    const ro = new ResizeObserver(() => updateClipHeight());
-    clip.querySelectorAll<HTMLElement>(".rt-pane").forEach((p) => ro.observe(p));
-  }
-
+  // 2026-05-12 — JS height tracking removed. .rt-clip uses CSS grid
+  // overlap now; both panes share a single grid cell that sizes to
+  // max(active, inactive) automatically. See monster-info-page.ts
+  // for full rationale.
   requestAnimationFrame(() => moveIndicatorTo(findActiveButton()));
 
   const switchTo = (next: RtTabId) => {
@@ -109,7 +100,6 @@ function setupRtTabSwitching(): void {
     buttons.forEach((b) => b.classList.toggle("on", b.dataset.rtTab === next));
     moveIndicatorTo(findActiveButton());
     if (clip) clip.setAttribute("data-active", next);
-    updateClipHeight();
     if (next === "res") void ensureRtResourceMount();
   };
 
