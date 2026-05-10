@@ -70,6 +70,32 @@ label.field{
 }
 .row-2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 
+/* 2026-05-11 — type selector toggle (replaces a <select> dropdown).
+   Mirrors the cluster's CN|EN switch pattern: 3 segments, click to
+   pick, accent-tinted active state. */
+.type-toggle{
+  display:grid;grid-template-columns:1fr 1fr 1fr;
+  height:30px;
+  background:var(--bg-strong);
+  border:1px solid var(--border);
+  border-radius:6px;
+  overflow:hidden;
+}
+.type-toggle button{
+  background:transparent;border:none;
+  color:var(--text-dim);
+  font-family:inherit;font-size:12px;font-weight:700;
+  cursor:pointer;
+  letter-spacing:0.4px;
+  transition:background .12s, color .12s;
+}
+.type-toggle button:hover{color:var(--text)}
+.type-toggle button.on{
+  background:rgba(93,173,226,0.22);
+  color:#7ec8f0;
+}
+.type-toggle button + button{border-left:1px solid var(--border)}
+
 .icon-label{
   font-size:10.5px;color:var(--text-dim);text-transform:uppercase;letter-spacing:.4px;font-weight:700;
   margin-top:2px;
@@ -148,14 +174,14 @@ label.field{
       <input type="text" id="name" maxlength="32" placeholder="如：一环法术槽" />
     </label>
 
-    <label class="field">
+    <div class="field">
       <span>类型</span>
-      <select id="type">
-        <option value="count">个数（多个图标）</option>
-        <option value="bar">进度条</option>
-        <option value="number">数字</option>
-      </select>
-    </label>
+      <div class="type-toggle" id="typeToggle">
+        <button type="button" data-type="count"  class="on">个数</button>
+        <button type="button" data-type="bar">进度</button>
+        <button type="button" data-type="number">数字</button>
+      </div>
+    </div>
 
     <div class="row-2">
       <label class="field">

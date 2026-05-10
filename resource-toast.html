@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<title>Resource Toast</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{
+  height:100%;width:100%;overflow:hidden;
+  background:transparent;
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif;
+  pointer-events:none; /* belt + suspenders alongside disablePointerEvents:true */
+}
+/* Bottom-center stack — toasts flow horizontally, each lifts on
+   its own animation track. The container itself never blocks
+   pointer events; only the inner cards have pointer-events restored
+   for hover (so users can pause + read). */
+.stack{
+  position:fixed;
+  left:50%;
+  bottom:24px;
+  transform:translateX(-50%);
+  display:flex;flex-wrap:wrap;flex-direction:row-reverse;
+  justify-content:center;
+  gap:10px;
+  max-width:calc(100vw - 48px);
+}
+.toast{
+  pointer-events:auto;
+  display:flex;align-items:center;gap:10px;
+  min-width:180px; max-width:300px;
+  padding:8px 14px 8px 10px;
+  background:rgba(20,24,38,0.92);
+  border:1px solid rgba(255,255,255,0.16);
+  border-radius:10px;
+  box-shadow:0 8px 22px rgba(0,0,0,0.45), 0 0 0 1px rgba(0,0,0,0.4);
+  color:#e6e8ee;
+  font-size:12px;
+  /* Initial state: invisible, offset 24px down. */
+  opacity:0;
+  transform:translateY(24px);
+  transition:opacity .28s ease-out, transform .28s ease-out;
+}
+.toast.is-in{opacity:1;transform:translateY(0)}
+.toast.is-out{opacity:0;transform:translateY(-8px)}
+.toast.delta-up{border-color:rgba(46,204,113,0.55);box-shadow:0 8px 22px rgba(46,204,113,0.18)}
+.toast.delta-down{border-color:rgba(231,76,60,0.55);box-shadow:0 8px 22px rgba(231,76,60,0.18)}
+
+.toast .ic{
+  flex-shrink:0;
+  width:34px;height:34px;
+  display:flex;align-items:center;justify-content:center;
+  background:rgba(255,255,255,0.05);
+  border-radius:50%;
+  color:#cbd5e1;
+}
+.toast .ic svg{width:24px;height:24px;display:block}
+.toast.delta-down .ic svg{opacity:0.7;filter:saturate(0.6)}
+
+.toast .body{
+  flex:1;min-width:0;
+  display:flex;flex-direction:column;gap:1px;
+}
+.toast .title{
+  font-weight:700;font-size:11.5px;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  color:#e6e8ee;
+}
+.toast .sub{
+  font-size:10.5px;color:#9aa0b3;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  letter-spacing:0.1px;
+}
+.toast .vals{
+  display:flex;align-items:baseline;gap:4px;
+  font-family:ui-monospace,Consolas,monospace;
+  font-variant-numeric:tabular-nums;
+}
+.toast .cur{font-size:14px;font-weight:800;color:#fff}
+.toast .sep{color:#5a607a}
+.toast .max{font-size:11px;color:#9aa0b3}
+.toast .delta{
+  font-size:10.5px;font-weight:800;
+  padding:1px 6px;border-radius:4px;
+  margin-left:auto;
+  letter-spacing:0.3px;
+}
+.toast.delta-up .delta{
+  background:rgba(46,204,113,0.18);
+  color:#7be0a0;
+}
+.toast.delta-down .delta{
+  background:rgba(231,76,60,0.18);
+  color:#ff8b7a;
+}
+.toast.delta-zero .delta{display:none}
+</style>
+</head>
+<body>
+<div class="stack" id="stack"></div>
+<script type="module" src="/src/resource-toast-page.ts"></script>
+</body>
+</html>

@@ -18,6 +18,13 @@ import { Resource, PLUGIN_ID } from "./types";
 const MODAL_ID = `${PLUGIN_ID}/edit-modal`;
 const MODAL_URL = assetUrl("resource-edit.html");
 
+// 2026-05-11 — bottom-center toast overlay. Always-on full-screen
+// modal with disablePointerEvents so it never blocks the canvas.
+// resource-toast-page.ts subscribes to BC_RESOURCE_CHANGED and pops
+// a small card every time someone in the room mutates a resource.
+const TOAST_MODAL_ID = `${PLUGIN_ID}/toast-modal`;
+const TOAST_URL = assetUrl("resource-toast.html");
+
 const BC_OPEN_EDIT = `${PLUGIN_ID}/edit-open`;
 const BC_SAVE = `${PLUGIN_ID}/edit-save`;
 const BC_DELETE = `${PLUGIN_ID}/edit-delete`;
@@ -25,11 +32,36 @@ const BC_CANCEL = `${PLUGIN_ID}/edit-cancel`;
 
 const unsubs: Array<() => void> = [];
 let modalOpen = false;
+let toastOpen = false;
 
 async function closeModal(): Promise<void> {
   if (!modalOpen) return;
   modalOpen = false;
   try { await OBR.modal.close(MODAL_ID); } catch {}
+}
+
+async function openToastOverlay(): Promise<void> {
+  if (toastOpen) return;
+  try {
+    try { await OBR.modal.close(TOAST_MODAL_ID); } catch {}
+    await OBR.modal.open({
+      id: TOAST_MODAL_ID,
+      url: TOAST_URL,
+      fullScreen: true,
+      hidePaper: true,
+      hideBackdrop: true,
+      disablePointerEvents: true,
+    });
+    toastOpen = true;
+  } catch (e) {
+    console.warn("[obr-suite/resources] open toast overlay failed", e);
+  }
+}
+
+async function closeToastOverlay(): Promise<void> {
+  if (!toastOpen) return;
+  toastOpen = false;
+  try { await OBR.modal.close(TOAST_MODAL_ID); } catch {}
 }
 
 interface OpenPayload {
@@ -107,10 +139,26 @@ export async function setupResourceTracker(): Promise<void> {
       await closeModal();
     }),
   );
+
+  // Mount the bottom-center toast overlay once. Listens for
+  // BC_RESOURCE_CHANGED (LOCAL+REMOTE) emitted by mountResourcePanel's
+  // onChange callback in the bestiary / cc info popovers. Re-opens
+  // automatically on scene change via the scene-ready hook below.
+  unsubs.push(
+    OBR.scene.onReadyChange(async (ready) => {
+      if (ready) await openToastOverlay();
+      else await closeToastOverlay();
+    }),
+  );
+  try {
+    const ready = await OBR.scene.isReady();
+    if (ready) await openToastOverlay();
+  } catch {}
 }
 
 export async function teardownResourceTracker(): Promise<void> {
   await closeModal();
+  await closeToastOverlay();
   for (const u of unsubs.splice(0)) {
     try { u(); } catch {}
   }

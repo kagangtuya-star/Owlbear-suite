@@ -32,11 +32,10 @@ const BC_RESOURCE_CANCEL = `${PLUGIN_ID}/edit-cancel`;
 
 const $ = (id: string) => document.getElementById(id) as HTMLElement;
 const $i = (id: string) => document.getElementById(id) as HTMLInputElement;
-const $s = (id: string) => document.getElementById(id) as HTMLSelectElement;
 
 const titleEl = $("title");
 const inpName = $i("name");
-const selType = $s("type");
+const typeToggle = $("typeToggle");
 const inpCurrent = $i("current");
 const inpMax = $i("max");
 const iconGrid = $("iconGrid");
@@ -50,6 +49,28 @@ const btnDelete = $("btnDelete");
 let selectedIcon: IconId = "gem";
 let editingResourceId: string | null = null;
 let itemId = "";
+
+// 2026-05-11 — type toggle state. Replaces the old <select id="type">
+// dropdown with three buttons (个数 / 进度 / 数字). State lives here
+// instead of on the DOM so payload (re-)apply doesn't fight with the
+// .on class.
+let selectedType: ResourceType = "count";
+
+function applyTypeToggleClasses(): void {
+  if (!typeToggle) return;
+  for (const b of typeToggle.querySelectorAll<HTMLButtonElement>("button[data-type]")) {
+    b.classList.toggle("on", b.dataset.type === selectedType);
+  }
+}
+typeToggle?.addEventListener("click", (e) => {
+  const t = (e.target as HTMLElement | null)?.closest<HTMLButtonElement>("button[data-type]");
+  if (!t) return;
+  const v = t.dataset.type as ResourceType | undefined;
+  if (!v || (v !== "count" && v !== "bar" && v !== "number")) return;
+  selectedType = v;
+  applyTypeToggleClasses();
+  updatePreview();
+});
 
 function broadcast(channel: string, data: unknown): void {
   try {
@@ -98,7 +119,7 @@ function applyPayload(p: HashPayload): void {
     titleEl.textContent = "编辑资源";
     btnDelete.style.display = "";
     inpName.value = p.resource.name;
-    selType.value = p.resource.type;
+    selectedType = p.resource.type;
     inpCurrent.value = String(p.resource.current);
     inpMax.value = String(p.resource.max);
     selectedIcon = p.resource.icon;
@@ -107,11 +128,12 @@ function applyPayload(p: HashPayload): void {
     titleEl.textContent = "新建资源";
     btnDelete.style.display = "none";
     inpName.value = "";
-    selType.value = "count";
+    selectedType = "count";
     inpCurrent.value = "2";
     inpMax.value = "2";
     selectedIcon = "gem";
   }
+  applyTypeToggleClasses();
   renderIconGrid();
   updatePreview();
   // Auto-focus name input on first paint — saves a click for the
@@ -122,7 +144,6 @@ function applyPayload(p: HashPayload): void {
 [inpName, inpCurrent, inpMax].forEach((el) => {
   el.addEventListener("input", updatePreview);
 });
-selType.addEventListener("change", updatePreview);
 
 btnX.addEventListener("click", () => { void close(); });
 btnCancel.addEventListener("click", () => { void close(); });
@@ -140,7 +161,7 @@ btnSave.addEventListener("click", () => {
     inpName.focus();
     return;
   }
-  const type = selType.value as ResourceType;
+  const type = selectedType;
   const current = Number(inpCurrent.value);
   const max = Number(inpMax.value);
   if (!Number.isFinite(current) || !Number.isFinite(max)) {

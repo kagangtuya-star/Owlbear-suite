@@ -40,6 +40,33 @@ import { ICON_LIBRARY } from "./icons";
 import { readResources, updateResource } from "./storage";
 
 const BC_OPEN_EDIT = `${PLUGIN_ID}/edit-open`;
+// 2026-05-11 — fire on every value commit so the bottom-center
+// toast overlay (resource-toast.html, bg-mounted by index.ts) shows
+// a card. LOCAL+REMOTE so all players in the room see the change.
+const BC_RESOURCE_CHANGED = `${PLUGIN_ID}/changed`;
+
+async function broadcastChanged(
+  itemId: string,
+  resource: Resource,
+  delta: number,
+  prevValue: number,
+): Promise<void> {
+  if (delta === 0) return;
+  // Resolve the token's display name on this client so the toast
+  // shows "<token>·<resource>" when it pops on every other client.
+  let tokenName = "";
+  try {
+    const its = await OBR.scene.items.getItems([itemId]);
+    if (its[0]?.name) tokenName = String(its[0].name);
+  } catch {}
+  try {
+    const payload = { tokenId: itemId, tokenName, resource, delta, prevValue };
+    await Promise.all([
+      OBR.broadcast.sendMessage(BC_RESOURCE_CHANGED, payload, { destination: "LOCAL" }),
+      OBR.broadcast.sendMessage(BC_RESOURCE_CHANGED, payload, { destination: "REMOTE" }),
+    ]);
+  } catch {}
+}
 
 export interface MountOptions {
   container: HTMLElement;
@@ -155,7 +182,7 @@ export function mountResourcePanel(opts: MountOptions): {
               data-action="count-toggle"
               data-rid="${escapeAttr(r.id)}"
               data-pos="${i}"
-              title="${escapeAttr(r.name)} · 点 ${i} ${filled ? "→ " + (i - 1) : "→ " + i} · 右键归满">
+              title="${escapeAttr(r.name)} · 第 ${i} 格 · 点击赋值 ${i}（已为 ${i} 时减 1）· 右键归满">
           ${ICON_LIBRARY[r.icon as IconId] ?? ICON_LIBRARY.gem}
         </span>
       `);
@@ -166,38 +193,61 @@ export function mountResourcePanel(opts: MountOptions): {
     return cells.join("");
   }
 
+  // 进度 (bar) — number-prefix label + draggable bar with the
+  // selected icon as the moving thumb. The number sits at the front
+  // of the bar so the icon can't cover it during slide.
   function renderBarPill(r: Resource): string {
     const max = Math.max(1, r.max);
     const cur = Math.max(0, Math.min(max, r.current));
     const ratio = (cur / max) * 100;
     return `
-      <span class="rt-pill rt-pill-icon full"
-            data-action="bar-reset"
-            data-rid="${escapeAttr(r.id)}"
-            title="${escapeAttr(r.name)} ${cur}/${max} · 左键 = 重置/-1，右键 = +1">
-        ${ICON_LIBRARY[r.icon as IconId] ?? ICON_LIBRARY.gem}
-      </span>
+      <div class="rt-bar-num" data-bar-num>${cur} / ${max}</div>
       <div class="rt-bar"
-           data-action="bar-step"
+           data-action="bar-drag"
            data-rid="${escapeAttr(r.id)}"
-           title="左半 = -1，右半 = +1">
+           title="${escapeAttr(r.name)} · 左键拖动设置进度，右键 +1 / 归满">
         <div class="rt-bar-fill" data-bar-fill style="width:${ratio.toFixed(1)}%"></div>
-        <div class="rt-bar-label" data-bar-label>${cur} / ${max}</div>
+        <span class="rt-bar-thumb"
+              data-bar-thumb
+              style="left:${ratio.toFixed(2)}%">
+          ${ICON_LIBRARY[r.icon as IconId] ?? ICON_LIBRARY.gem}
+        </span>
       </div>
     `;
   }
 
+  // 数字 (number) — bar layout: [MIN] [−] [○ icon + number] [+] [MAX].
+  // Center has a circle wrapping a large icon with the number
+  // overlayed (stroke for legibility). Left/right ends show min/max
+  // values as static labels.
   function renderNumberPill(r: Resource): string {
+    const min = 0;                   // current schema doesn't have a free min; pin at 0
+    const max = Math.max(0, r.max);
     const cur = r.current;
-    const max = r.max;
     return `
-      <span class="rt-pill rt-pill-icon ${cur <= 0 ? "spent" : "full"}"
-            data-action="number-step"
-            data-rid="${escapeAttr(r.id)}"
-            title="${escapeAttr(r.name)} ${cur}/${max} · 左键 = -1，右键 = +1，归零再点 = 重置">
-        ${ICON_LIBRARY[r.icon as IconId] ?? ICON_LIBRARY.gem}
-      </span>
-      <div class="rt-num-text" data-num-text>${cur} <span class="rt-num-sep">/</span> ${max}</div>
+      <div class="rt-num-bar">
+        <span class="rt-num-end" data-num-end="min" title="跳到最小（${min}）">${min}</span>
+        <button class="rt-num-step rt-num-minus"
+                data-action="num-step"
+                data-rid="${escapeAttr(r.id)}"
+                data-dir="-1"
+                type="button"
+                title="${escapeAttr(r.name)} −1">−</button>
+        <span class="rt-num-orb"
+              data-action="num-orb"
+              data-rid="${escapeAttr(r.id)}"
+              title="${escapeAttr(r.name)} ${cur}/${max} · 点击重置归满 / 归零再点也归满">
+          <span class="rt-num-orb-icon">${ICON_LIBRARY[r.icon as IconId] ?? ICON_LIBRARY.gem}</span>
+          <span class="rt-num-orb-val" data-num-val>${cur}</span>
+        </span>
+        <button class="rt-num-step rt-num-plus"
+                data-action="num-step"
+                data-rid="${escapeAttr(r.id)}"
+                data-dir="+1"
+                type="button"
+                title="${escapeAttr(r.name)} +1">+</button>
+        <span class="rt-num-end" data-num-end="max" title="跳到最大（${max}）">${max}</span>
+      </div>
     `;
   }
 
@@ -226,17 +276,14 @@ export function mountResourcePanel(opts: MountOptions): {
       const cur = Math.max(0, Math.min(max, r.current));
       const ratio = (cur / max) * 100;
       const fill = row.querySelector<HTMLElement>("[data-bar-fill]");
-      const label = row.querySelector<HTMLElement>("[data-bar-label]");
+      const num = row.querySelector<HTMLElement>("[data-bar-num]");
+      const thumb = row.querySelector<HTMLElement>("[data-bar-thumb]");
       if (fill) fill.style.width = `${ratio.toFixed(1)}%`;
-      if (label) label.textContent = `${cur} / ${max}`;
+      if (num) num.textContent = `${cur} / ${max}`;
+      if (thumb) thumb.style.left = `${ratio.toFixed(2)}%`;
     } else if (r.type === "number") {
-      const txt = row.querySelector<HTMLElement>("[data-num-text]");
-      if (txt) txt.innerHTML = `${r.current} <span class="rt-num-sep">/</span> ${r.max}`;
-      const icon = row.querySelector<HTMLElement>('[data-action="number-step"]');
-      if (icon) {
-        icon.classList.toggle("full", r.current > 0);
-        icon.classList.toggle("spent", r.current <= 0);
-      }
+      const val = row.querySelector<HTMLElement>("[data-num-val]");
+      if (val) val.textContent = String(r.current);
     }
     // Pulse the clicked element (or the row's primary icon if not given).
     if (pulseEl) firePulse(pulseEl);
@@ -260,17 +307,34 @@ export function mountResourcePanel(opts: MountOptions): {
       el.addEventListener("click", () => void onCountClick(id, el));
       el.addEventListener("contextmenu", (e) => { e.preventDefault(); void onCountReset(id, el); });
     });
-    container.querySelectorAll<HTMLElement>('[data-action="bar-step"]').forEach((el) => {
-      el.addEventListener("click", (e) => void onBarStep(id, el, e as MouseEvent));
-      el.addEventListener("contextmenu", (e) => e.preventDefault());
+    // Bar = drag-anywhere on the bar to set progress. Pointer events
+    // give us pointerdown / pointermove / pointerup with capture so a
+    // drag that exits the bar still tracks. Right-click = +1 / fill.
+    container.querySelectorAll<HTMLElement>('[data-action="bar-drag"]').forEach((el) => {
+      el.addEventListener("pointerdown", (e) => onBarPointerDown(id, el, e as PointerEvent));
+      el.addEventListener("contextmenu", (e) => {
+        e.preventDefault();
+        void onBarRightClick(id, el);
+      });
     });
-    container.querySelectorAll<HTMLElement>('[data-action="bar-reset"]').forEach((el) => {
-      el.addEventListener("click", () => void onIconReset(id, el));
-      el.addEventListener("contextmenu", (e) => { e.preventDefault(); void onIconStep(id, el, +1); });
+    // Number ±/orb buttons.
+    container.querySelectorAll<HTMLElement>('[data-action="num-step"]').forEach((el) => {
+      el.addEventListener("click", () => {
+        const dir = el.dataset.dir === "+1" ? 1 : -1;
+        void onNumberStep(id, el, dir as 1 | -1);
+      });
     });
-    container.querySelectorAll<HTMLElement>('[data-action="number-step"]').forEach((el) => {
-      el.addEventListener("click", () => void onNumberClickLeft(id, el));
-      el.addEventListener("contextmenu", (e) => { e.preventDefault(); void onIconStep(id, el, +1); });
+    container.querySelectorAll<HTMLElement>('[data-action="num-orb"]').forEach((el) => {
+      // Click → if 0, refill to max; else decrement by 1.
+      el.addEventListener("click", () => void onNumberOrbClick(id, el));
+      el.addEventListener("contextmenu", (e) => {
+        e.preventDefault();
+        void onNumberOrbReset(id, el);
+      });
+    });
+    // Click min/max labels jumps the current to that bound.
+    container.querySelectorAll<HTMLElement>('[data-num-end]').forEach((el) => {
+      el.addEventListener("click", () => void onNumberEndJump(id, el));
     });
     container.querySelectorAll<HTMLButtonElement>(".rt-row-edit").forEach((b) => {
       b.addEventListener("click", () => {
@@ -288,18 +352,19 @@ export function mountResourcePanel(opts: MountOptions): {
   // the DOM (no re-render), then persists. items.onChange echo skips
   // re-render because the metadata-fetched state matches local state.
 
-  /** Position-aware count click. Click position N:
-   *    • If N > current  → fill: current := N
-   *    • If N <= current → consume: current := N - 1
-   *  Net effect: clicking the boundary toggles by 1; clicking far
-   *  positions jumps directly there. Replaces the older "any click
-   *  at current=0 resets to max" footgun. */
+  /** Position-aware count click. New spec (2026-05-11):
+   *    • If position N === current → consume to N-1
+   *    • Otherwise               → set to N
+   *  e.g. 6/6 click 5 → 5/6 (set), 5/6 click 5 → 4/6 (consume).
+   *  Replaces the previous `pos > current ? pos : pos-1` formula
+   *  which mis-bumped to N-2 in the user's "click 5 at 6/6" case.
+   */
   async function onCountClick(itemId: string, el: HTMLElement): Promise<void> {
     const rid = el.dataset.rid!;
     const pos = parseInt(el.dataset.pos ?? "0", 10);
     const r = currentRender.find((x) => x.id === rid);
     if (!r) return;
-    const next = pos > r.current ? pos : pos - 1;
+    const next = pos === r.current ? pos - 1 : pos;
     if (next === r.current) return;
     await applyChange(itemId, r, next, next - r.current, el);
   }
@@ -309,28 +374,82 @@ export function mountResourcePanel(opts: MountOptions): {
     if (!r || r.current >= r.max) return;
     await applyChange(itemId, r, r.max, r.max - r.current, el);
   }
-  async function onBarStep(itemId: string, el: HTMLElement, e: MouseEvent): Promise<void> {
+
+  // Bar drag — pointer-capture-driven. Clicking at any X on the bar
+  // sets current to round(ratio × max); subsequent moves track the
+  // pointer. We optimistically patch on every move (no scene-write
+  // burst) and only persist on pointerup (single updateResource).
+  function onBarPointerDown(itemId: string, el: HTMLElement, ev: PointerEvent): void {
+    if (ev.button !== 0) return;
     const rid = el.dataset.rid!;
     const r = currentRender.find((x) => x.id === rid);
     if (!r) return;
-    const rect = el.getBoundingClientRect();
-    const left = (e.clientX - rect.left) < rect.width / 2;
-    const next = left ? Math.max(0, r.current - 1) : Math.min(r.max, r.current + 1);
+    ev.preventDefault();
+    el.setPointerCapture(ev.pointerId);
+    const startCurrent = r.current;
+    const max = Math.max(1, r.max);
+    const computeAt = (clientX: number): number => {
+      const rect = el.getBoundingClientRect();
+      const t = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+      return Math.round(t * max);
+    };
+    let lastApplied = startCurrent;
+    const initial = computeAt(ev.clientX);
+    if (initial !== startCurrent) {
+      // Optimistic patch only — no scene write yet (would burst on every move).
+      const idx = currentRender.findIndex((x) => x.id === r.id);
+      if (idx >= 0) {
+        const nextRow = { ...r, current: initial };
+        currentRender = currentRender.map((x, i) => (i === idx ? nextRow : x));
+        patchRow(nextRow, null);
+        lastApplied = initial;
+      }
+    }
+    const onMove = (e: PointerEvent) => {
+      const v = computeAt(e.clientX);
+      if (v === lastApplied) return;
+      const idx = currentRender.findIndex((x) => x.id === r.id);
+      if (idx < 0) return;
+      const nextRow = { ...r, current: v };
+      currentRender = currentRender.map((x, i) => (i === idx ? nextRow : x));
+      patchRow(nextRow, null);
+      lastApplied = v;
+    };
+    const onUp = (_e: PointerEvent) => {
+      el.removeEventListener("pointermove", onMove);
+      el.removeEventListener("pointerup", onUp);
+      el.removeEventListener("pointercancel", onUp);
+      try { el.releasePointerCapture(ev.pointerId); } catch {}
+      // Persist final value if it differs from the start.
+      if (lastApplied !== startCurrent) {
+        const final = currentRender.find((x) => x.id === r.id);
+        if (final) {
+          lastSnapshotJson = JSON.stringify(currentRender);
+          firePulse(el);
+          onChange?.({ resourceName: r.name || "(未命名)", delta: lastApplied - startCurrent, current: lastApplied, max: r.max });
+          void broadcastChanged(itemId, final, lastApplied - startCurrent, startCurrent);
+          void updateResource(itemId, r.id, () => final);
+        }
+      }
+    };
+    el.addEventListener("pointermove", onMove);
+    el.addEventListener("pointerup", onUp);
+    el.addEventListener("pointercancel", onUp);
+  }
+  async function onBarRightClick(itemId: string, el: HTMLElement): Promise<void> {
+    const rid = el.dataset.rid!;
+    const r = currentRender.find((x) => x.id === rid);
+    if (!r) return;
+    // Right-click: +1 (or fill if already at 0). Saves a manual
+    // drag-to-max for the common "I rested, top up" case.
+    const next = r.current >= r.max ? r.max : r.current + 1;
     if (next === r.current) return;
     await applyChange(itemId, r, next, next - r.current, el);
   }
-  async function onIconReset(itemId: string, el: HTMLElement): Promise<void> {
-    const rid = el.dataset.rid!;
-    const r = currentRender.find((x) => x.id === rid);
-    if (!r) return;
-    if (r.current >= r.max) {
-      const next = Math.max(0, r.current - 1);
-      if (next !== r.current) await applyChange(itemId, r, next, next - r.current, el);
-      return;
-    }
-    await applyChange(itemId, r, r.max, r.max - r.current, el);
-  }
-  async function onIconStep(itemId: string, el: HTMLElement, dir: 1 | -1): Promise<void> {
+
+  // Number mode: − / + buttons on either side of the orb. The orb
+  // itself click-cycles 0 → max → 0. Min/max ends jump to bounds.
+  async function onNumberStep(itemId: string, el: HTMLElement, dir: 1 | -1): Promise<void> {
     const rid = el.dataset.rid!;
     const r = currentRender.find((x) => x.id === rid);
     if (!r) return;
@@ -338,15 +457,31 @@ export function mountResourcePanel(opts: MountOptions): {
     if (next === r.current) return;
     await applyChange(itemId, r, next, next - r.current, el);
   }
-  async function onNumberClickLeft(itemId: string, el: HTMLElement): Promise<void> {
+  async function onNumberOrbClick(itemId: string, el: HTMLElement): Promise<void> {
     const rid = el.dataset.rid!;
     const r = currentRender.find((x) => x.id === rid);
     if (!r) return;
-    if (r.current <= 0) {
-      await applyChange(itemId, r, r.max, r.max, el);
-    } else {
-      await applyChange(itemId, r, r.current - 1, -1, el);
-    }
+    // 0 → max (refill); otherwise → 0 (consume to zero).
+    const next = r.current <= 0 ? r.max : 0;
+    if (next === r.current) return;
+    await applyChange(itemId, r, next, next - r.current, el);
+  }
+  async function onNumberOrbReset(itemId: string, el: HTMLElement): Promise<void> {
+    const rid = el.dataset.rid!;
+    const r = currentRender.find((x) => x.id === rid);
+    if (!r) return;
+    if (r.current >= r.max) return;
+    await applyChange(itemId, r, r.max, r.max - r.current, el);
+  }
+  async function onNumberEndJump(itemId: string, el: HTMLElement): Promise<void> {
+    const end = el.dataset.numEnd;
+    const row = el.closest<HTMLElement>(".rt-row");
+    const rid = row?.dataset.id ?? "";
+    const r = currentRender.find((x) => x.id === rid);
+    if (!r) return;
+    const next = end === "max" ? r.max : 0;
+    if (next === r.current) return;
+    await applyChange(itemId, r, next, next - r.current, el);
   }
 
   async function applyChange(
@@ -365,8 +500,9 @@ export function mountResourcePanel(opts: MountOptions): {
     lastSnapshotJson = JSON.stringify(currentRender);
     // 2. Patch DOM in place + run pulse animation. No re-render.
     patchRow(nextRow, pulseEl);
-    // 3. Notifier hook (host pages can pop a "consumed N" toast).
+    // 3. Notifier hook + room-wide toast broadcast.
     onChange?.({ resourceName: r.name || "(未命名)", delta, current: next, max: r.max });
+    void broadcastChanged(itemId, nextRow, delta, r.current);
     // 4. Persist. items.onChange echoes back; refresh() compares
     //    JSON snapshots and skips the re-render path.
     await updateResource(itemId, r.id, () => nextRow);
@@ -477,32 +613,126 @@ function ensureStyles(): void {
       100% { transform:scale(1); }
     }
     .rt-pill-empty { font-size:11px; color:#9aa0b3; font-style:italic }
+
+    /* ===== 进度 (bar) — number-prefix label + draggable thumb ====== */
+    .rt-bar-num {
+      flex:0 0 auto;
+      font-size:11px; font-weight:700; color:#e6e8ee;
+      font-variant-numeric:tabular-nums;
+      letter-spacing:0.3px;
+      padding:0 4px;
+      min-width:42px;
+      text-align:center;
+    }
     .rt-bar {
       flex:1; min-width:80px;
-      height:18px;
+      height:22px;
       background:rgba(255,255,255,0.06);
       border:1px solid rgba(255,255,255,0.10);
-      border-radius:9px; position:relative; overflow:hidden;
-      cursor:pointer; user-select:none;
+      border-radius:11px; position:relative;
+      cursor:grab; user-select:none;
+      touch-action:none;
     }
+    .rt-bar:active{cursor:grabbing}
     .rt-bar-fill {
       position:absolute; inset:0 auto 0 0;
+      border-radius:11px 0 0 11px;
       background:linear-gradient(90deg, #16a34a, #4ade80);
-      transition:width .18s ease-out;
+      pointer-events:none;
     }
-    .rt-bar-label {
-      position:relative; z-index:1;
-      font-size:11px; color:#fff; font-weight:600;
-      text-align:center; line-height:18px;
-      text-shadow:0 1px 2px rgba(0,0,0,0.5);
+    .rt-bar-thumb {
+      position:absolute; top:50%;
+      width:26px; height:26px;
+      transform:translate(-50%, -50%);
+      display:inline-flex; align-items:center; justify-content:center;
+      background:#1f2230;
+      border:2px solid #4ade80;
+      border-radius:50%;
+      box-shadow:0 2px 6px rgba(0,0,0,0.4);
+      color:#e6e8ee;
+      pointer-events:none;
+      z-index:1;
+    }
+    .rt-bar-thumb svg { width:18px; height:18px }
+    /* Click-scale pulse for the bar — fires when a drag commits.
+       Same animation as count-mode .rt-pulse but applied to .rt-bar. */
+    .rt-bar.rt-pulse { animation: rt-bar-pulse 0.18s ease-out }
+    @keyframes rt-bar-pulse {
+      0% { transform: scale(1); }
+      45% { transform: scale(1.03); }
+      100% { transform: scale(1); }
+    }
+
+    /* ===== 数字 (number) — bar layout: MIN [−] orb [+] MAX ====== */
+    .rt-num-bar {
+      flex:1;
+      display:grid;
+      grid-template-columns:auto auto 1fr auto auto;
+      gap:6px;
+      align-items:center;
+      padding:0 4px;
+    }
+    .rt-num-end {
+      font-size:10.5px; font-weight:700; color:#9aa0b3;
       font-variant-numeric:tabular-nums;
+      cursor:pointer;
+      padding:2px 4px; border-radius:4px;
+      transition:background .12s, color .12s;
     }
-    .rt-num-text {
-      font-size:14px; font-weight:700; color:#e6e8ee;
+    .rt-num-end:hover { background:rgba(255,255,255,0.08); color:#e6e8ee }
+    .rt-num-step {
+      width:24px; height:24px;
+      background:rgba(255,255,255,0.06);
+      border:1px solid rgba(255,255,255,0.12);
+      border-radius:6px;
+      color:#e6e8ee;
+      font-size:14px; font-weight:800; line-height:1;
+      font-family:inherit;
+      cursor:pointer;
+      display:flex; align-items:center; justify-content:center;
+      transition:background .12s, border-color .12s, transform .12s;
+    }
+    .rt-num-step:hover { background:rgba(93,173,226,0.15); border-color:rgba(93,173,226,0.45); color:#7ec8f0 }
+    .rt-num-step:active { transform:scale(0.94) }
+    .rt-num-step.rt-pulse { animation: rt-pulse 0.22s ease-out }
+    .rt-num-orb {
+      justify-self:center;
+      position:relative;
+      width:48px; height:48px;
+      display:inline-flex; align-items:center; justify-content:center;
+      background:radial-gradient(circle at 30% 30%, #3a3f55, #232636 70%);
+      border:2px solid rgba(255,255,255,0.18);
+      border-radius:50%;
+      cursor:pointer;
+      box-shadow:0 3px 8px rgba(0,0,0,0.45), inset 0 1px 1px rgba(255,255,255,0.10);
+      transition:transform .12s ease, border-color .15s;
+    }
+    .rt-num-orb:hover { border-color:rgba(93,173,226,0.65) }
+    .rt-num-orb:active { transform:scale(0.95) }
+    .rt-num-orb-icon {
+      position:absolute; inset:0;
+      display:flex; align-items:center; justify-content:center;
+      color:#cbd5e1;
+    }
+    .rt-num-orb-icon svg { width:30px; height:30px; filter:drop-shadow(0 1px 2px rgba(0,0,0,0.5)) }
+    /* Number overlay — large, with stroke (-webkit-text-stroke) + a
+       text-shadow halo so it stays legible regardless of which icon
+       sits behind it. */
+    .rt-num-orb-val {
+      position:absolute; inset:0;
+      display:flex; align-items:center; justify-content:center;
+      font-family:ui-monospace,Consolas,monospace;
+      font-size:18px; font-weight:900;
+      color:#fff;
+      -webkit-text-stroke:2px #1f2230;
+      text-stroke:2px #1f2230;
+      text-shadow:
+        0 0 3px rgba(0,0,0,0.95),
+        0 1px 2px rgba(0,0,0,0.8);
       font-variant-numeric:tabular-nums;
-      padding:2px 8px;
+      pointer-events:none;
     }
-    .rt-num-sep { color:#9aa0b3; font-weight:400; margin:0 2px }
+    .rt-num-orb.rt-pulse { animation: rt-pulse 0.28s cubic-bezier(.34,1.56,.64,1) }
   `;
   const tag = document.createElement("style");
   tag.id = "obr-suite-resource-tracker-styles";

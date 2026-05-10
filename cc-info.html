@@ -580,10 +580,9 @@ button.name.name-btn:disabled{opacity:0.5;cursor:wait}
   border-bottom:2px solid #5dade2;
   border-radius:4px 4px 0 0;
   /* !important needed: a global * { transition:none!important } reset
-     up top kills every transition by default (was added to suppress
-     OBR's default popover-zoom). The slide-tab specific rules need
-     to win against that. Same trick on .rt-clip and .rt-pane below. */
-  transition:transform .22s cubic-bezier(.4,.0,.2,1), width .22s cubic-bezier(.4,.0,.2,1) !important;
+     up top kills every transition by default. Same trick on .rt-clip
+     and .rt-pane below. */
+  transition:transform .1s ease-out, width .1s ease-out !important;
   pointer-events:none;
   z-index:0;
 }
@@ -596,13 +595,17 @@ button.name.name-btn:disabled{opacity:0.5;cursor:wait}
   position:relative;
   overflow:hidden;
   width:100%;
-  transition:height .35s cubic-bezier(.4,0,.2,1) !important;
+  /* `contain` isolates layout from the rest of the document so an
+     in-flight pane translate can't ripple outward and stretch
+     siblings. 0.35→0.1s for snappier feel. */
+  contain:layout paint;
+  transition:height .1s ease-out !important;
 }
 .rt-pane{
   position:absolute;
   top:0; left:0;
   width:100%;
-  transition:transform .35s cubic-bezier(.4,0,.2,1), opacity .35s ease !important;
+  transition:transform .1s ease-out, opacity .1s ease-out !important;
 }
 .rt-clip[data-active="attr"] .rt-pane[data-pane="attr"]{ transform:translateX(0); opacity:1 }
 .rt-clip[data-active="attr"] .rt-pane[data-pane="res"]{  transform:translateX(100%); opacity:.4 }

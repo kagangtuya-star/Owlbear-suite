@@ -418,7 +418,7 @@ button.name.name-btn:disabled{opacity:0.5;cursor:wait}
      up top kills every transition by default (was added to suppress
      OBR's default popover-zoom). The slide-tab specific rules need
      to win against that. Same trick on .rt-clip and .rt-pane below. */
-  transition:transform .22s cubic-bezier(.4,.0,.2,1), width .22s cubic-bezier(.4,.0,.2,1) !important;
+  transition:transform .1s ease-out, width .1s ease-out !important;
   pointer-events:none;
   z-index:0;
 }
@@ -431,13 +431,20 @@ button.name.name-btn:disabled{opacity:0.5;cursor:wait}
   position:relative;
   overflow:hidden;
   width:100%;
-  transition:height .35s cubic-bezier(.4,0,.2,1) !important;
+  /* 2026-05-11 — speed bump 0.35 → 0.1s + `contain` to keep the
+     pane's transform from triggering width re-flow on adjacent
+     siblings (user reported "其他组件被突兀拉长/缩短" during the
+     slide). `contain: layout paint` isolates the clip's internal
+     layout from the rest of the document so an in-flight pane
+     translate can't ripple outward through bounding-box math. */
+  contain:layout paint;
+  transition:height .1s ease-out !important;
 }
 .rt-pane{
   position:absolute;
   top:0; left:0;
   width:100%;
-  transition:transform .35s cubic-bezier(.4,0,.2,1), opacity .35s ease !important;
+  transition:transform .1s ease-out, opacity .1s ease-out !important;
 }
 /* Default: attr is on the LEFT (visible at translateX(0) when active);
    res sits OFF-SCREEN on the right at translateX(100%). */
