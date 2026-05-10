@@ -802,11 +802,27 @@ OBR.onReady(async () => {
 
   // Live dice-roll broadcasts → queue as PENDING. Visible entry only
   // appears when the matching BC_DICE_HISTORY_REVEAL arrives (at the
-  // end of the fly-to-history animation). Dark rolls are sent
-  // LOCAL-only so non-DM clients never receive them.
+  // end of the fly-to-history animation).
+  //
+  // 2026-05-10 fix — dark roll redact gate. The dice action panel
+  // sends hidden rolls LOCAL-only, but the bg's quick-roll path
+  // (modules/dice/index.ts handleQuickRoll, which the cc-info /
+  // monster-info / dice-quick-popup tag clicks all flow through)
+  // intentionally fans out to REMOTE so player clients can play
+  // tumble + climax SFX without seeing the values. The full payload
+  // includes the dice array though, so without this gate every
+  // player's history popover stored the dark roll and rendered it
+  // (with a "DARK" tag, but the values were still visible). Now
+  // non-DM non-roller receivers drop the entry entirely on the
+  // listener side — the SFX-only branch in modules/dice/index.ts
+  // (search "Hidden (dark) roll on a non-DM, non-roller client")
+  // already handles the audio cadence, so we lose nothing.
   OBR.broadcast.onMessage(BROADCAST_DICE_ROLL, (event) => {
     const data = event.data as HistoryEntry | undefined;
     if (!data || !Array.isArray(data.dice) || !data.rollId) return;
+    if (data.hidden && myRole !== "GM" && data.rollerId !== myPlayerId) {
+      return;
+    }
     // Stash. Fallback timer: if the reveal never arrives (effect
     // modal crashed / cancelled), commit anyway after PENDING_TIMEOUT_MS.
     const timer = window.setTimeout(() => commitPending(data.rollId), PENDING_TIMEOUT_MS);

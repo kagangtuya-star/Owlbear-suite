@@ -137,6 +137,11 @@ let animationTimer: number | null = null;
 const myActiveRollIds = new Set<string>();
 // DM-only flag — gates visibility of the 暗骰 (dark roll) button.
 let isDM = false;
+// This client's own player id, captured at onReady. Used by the
+// dark-roll redact gate in the BROADCAST_DICE_ROLL listener so a DM
+// who happens to be the roller still gets their own entry stored on
+// their own client.
+let myPlayerId = "";
 
 // --- DOM refs ---
 const diceRow      = document.getElementById("diceRow")      as HTMLDivElement;
@@ -2363,12 +2368,16 @@ OBR.onReady(async () => {
   // for SFX broadcast playback.
   subscribeToSfx();
 
-  // Resolve role + show / hide the 暗骰 (dark roll) button. Only DMs
-  // see it. (OBR.player.onChange would also re-resolve if the role
-  // ever flipped at runtime, but in practice it doesn't.)
+  // Resolve role + this client's player id. Both feed into the
+  // dark-roll redact gate in the BROADCAST_DICE_ROLL listener below.
+  // (OBR.player.onChange would also re-resolve if the role ever
+  // flipped at runtime, but in practice it doesn't.)
   try {
     const role = await OBR.player.getRole();
     isDM = role === "GM";
+  } catch {}
+  try {
+    myPlayerId = await OBR.player.getId();
   } catch {}
   const btnDark = document.getElementById("btnDarkRoll") as HTMLButtonElement | null;
   if (btnDark) btnDark.style.display = isDM ? "" : "none";
@@ -2383,9 +2392,19 @@ OBR.onReady(async () => {
   OBR.broadcast.onMessage(BROADCAST_DICE_ROLL, (event) => {
     const data = event.data as DiceRollPayload | undefined;
     if (!data || !Array.isArray(data.dice) || !data.rollId) return;
-    // History also records hidden dark rolls (only the DM client
-    // receives those, so only the DM sees them in history — players
-    // see normal rolls only).
+    // 2026-05-10 fix — same dark-roll redact gate as history-page.ts.
+    // The bg's quick-roll fan-out sends hidden rolls to REMOTE so
+    // player clients can play SFX without seeing the values. Earlier
+    // comment here ("only the DM client receives those") was wrong:
+    // the dice action panel's own send path is LOCAL-only, but the
+    // cc-info / monster-info / dice-quick-popup tag clicks route
+    // through the bg, which DOES broadcast REMOTE. Without this
+    // gate, the action panel's history tab on a player client would
+    // store and render the dark roll values. We rely on `myPlayerId`
+    // / `isDM` (resolved earlier in this onReady block) to scope.
+    if (data.hidden && !isDM && data.rollerId !== myPlayerId) {
+      return;
+    }
     history.unshift(data);
     if (history.length > HISTORY_CAP) history.length = HISTORY_CAP;
     saveHistory();
