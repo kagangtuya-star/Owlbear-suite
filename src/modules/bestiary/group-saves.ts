@@ -1,6 +1,6 @@
 import OBR, { Item } from "@owlbear-rodeo/sdk";
 import { fireQuickRoll } from "../dice/tags";
-import { broadcastDiceRoll } from "../dice";
+import { broadcastDiceRoll, BROADCAST_DICE_ROLL, type DiceRollPayload } from "../dice";
 import { getLocalLang, onLangChange } from "../../state";
 import { assetUrl } from "../../asset-base";
 import { onViewportResize } from "../../utils/viewportAnchor";
@@ -19,6 +19,19 @@ import { patchBubbles, readBubbles } from "../../utils/statEdit";
 const PLUGIN_ID = "com.bestiary";
 const POPOVER_ID = "com.obr-suite/bestiary-group-saves";
 const POPOVER_URL = assetUrl("bestiary-group-saves.html");
+
+// Resolve modal — opened automatically after every group-save round
+// finishes (all per-token rolls have arrived). Lets the DM enter a
+// DC + HP value, then apply with the standard 5e save-half rule (fail
+// = full damage, succeed = half floor). The modal is OBR.modal so
+// click-away does NOT dismiss; only the explicit "好了" button closes
+// it. 2026-05-11.
+const RESOLVE_MODAL_ID = "com.obr-suite/bestiary-group-resolve";
+const RESOLVE_URL = assetUrl("bestiary-group-resolve.html");
+const BC_RESOLVE_STATE   = "com.obr-suite/bestiary-group-resolve-state";
+const BC_RESOLVE_APPLY   = "com.obr-suite/bestiary-group-resolve-apply";
+const BC_RESOLVE_DONE    = "com.obr-suite/bestiary-group-resolve-done";
+const BC_RESOLVE_REQUEST = "com.obr-suite/bestiary-group-resolve-request";
 
 const BESTIARY_SLUG_KEY = `${PLUGIN_ID}/slug`;
 const BESTIARY_DATA_KEY = `${PLUGIN_ID}/monsters`;
@@ -357,6 +370,58 @@ async function fireInitiative(
 // set forces an exact value clamped to [0, maxHp]. Each iteration
 // reads the current HP fresh so the user can stack actions in
 // sequence (−5, −5, +10) without race conditions.
+// Single-token HP / Max HP / AC delta — extracted from fireGroupHp so
+// the resolve modal's per-token half-on-success path can call it with
+// a different `value` per token.
+async function applyHpDeltaToToken(
+  itemId: string,
+  mode: "dmg" | "heal" | "set",
+  value: number,
+  field: "health" | "max health" | "armor class",
+): Promise<void> {
+  try {
+    const cur = await readBubbles(itemId);
+    const maxHp = typeof cur["max health"] === "number" ? (cur["max health"] as number) : null;
+    const hp = typeof cur["health"] === "number" ? (cur["health"] as number) : (maxHp ?? 0);
+    const temp = typeof cur["temporary health"] === "number" ? (cur["temporary health"] as number) : 0;
+    if (field === "max health" || field === "armor class") {
+      const current = typeof cur[field] === "number" ? (cur[field] as number) : (field === "max health" ? (maxHp ?? hp) : 0);
+      const next = mode === "set" ? value : mode === "heal" ? current + value : current - value;
+      await patchBubbles(itemId, { [field]: Math.max(field === "max health" ? 1 : 0, next) } as any);
+      return;
+    }
+    let nextHp = hp;
+    let nextTemp = temp;
+    if (mode === "set") {
+      nextHp = Math.max(0, value);
+      if (maxHp != null) nextHp = Math.min(nextHp, maxHp);
+    } else if (mode === "heal") {
+      nextHp = hp + value;
+      if (maxHp != null) nextHp = Math.min(nextHp, maxHp);
+    } else {
+      // dmg: bleed through temp HP first, then HP. Negative HP is
+      // pinned to 0 (matches the suite's standard "downed = 0 hp"
+      // convention; DMs that track negative HP can manually edit
+      // the token afterwards).
+      let dmg = value;
+      if (temp > 0) {
+        const absorb = Math.min(temp, dmg);
+        nextTemp = temp - absorb;
+        dmg -= absorb;
+      }
+      nextHp = Math.max(0, hp - dmg);
+    }
+    const patch: Record<string, number> = {};
+    if (nextHp !== hp) patch["health"] = nextHp;
+    if (nextTemp !== temp) patch["temporary health"] = nextTemp;
+    if (Object.keys(patch).length > 0) {
+      await patchBubbles(itemId, patch as any);
+    }
+  } catch (e) {
+    console.error("[obr-suite/group-saves] applyHpDeltaToToken failed for", itemId, e);
+  }
+}
+
 async function fireGroupHp(
   mode: "dmg" | "heal" | "set",
   value: number,
@@ -364,48 +429,174 @@ async function fireGroupHp(
 ): Promise<void> {
   if (lastSelection.length === 0) return;
   for (const m of lastSelection) {
-    try {
-      const cur = await readBubbles(m.itemId);
-      const maxHp = typeof cur["max health"] === "number" ? (cur["max health"] as number) : null;
-      const hp = typeof cur["health"] === "number" ? (cur["health"] as number) : (maxHp ?? 0);
-      const temp = typeof cur["temporary health"] === "number" ? (cur["temporary health"] as number) : 0;
-      if (field === "max health" || field === "armor class") {
-        const current = typeof cur[field] === "number" ? (cur[field] as number) : (field === "max health" ? (maxHp ?? hp) : 0);
-        const next = mode === "set" ? value : mode === "heal" ? current + value : current - value;
-        await patchBubbles(m.itemId, { [field]: Math.max(field === "max health" ? 1 : 0, next) } as any);
-        continue;
-      }
-      let nextHp = hp;
-      let nextTemp = temp;
-      if (mode === "set") {
-        nextHp = Math.max(0, value);
-        if (maxHp != null) nextHp = Math.min(nextHp, maxHp);
-      } else if (mode === "heal") {
-        nextHp = hp + value;
-        if (maxHp != null) nextHp = Math.min(nextHp, maxHp);
-      } else {
-        // dmg: bleed through temp HP first, then HP. Negative HP is
-        // pinned to 0 (matches the suite's standard "downed = 0 hp"
-        // convention; DMs that track negative HP can manually edit
-        // the token afterwards).
-        let dmg = value;
-        if (temp > 0) {
-          const absorb = Math.min(temp, dmg);
-          nextTemp = temp - absorb;
-          dmg -= absorb;
-        }
-        nextHp = Math.max(0, hp - dmg);
-      }
-      const patch: Record<string, number> = {};
-      if (nextHp !== hp) patch["health"] = nextHp;
-      if (nextTemp !== temp) patch["temporary health"] = nextTemp;
-      if (Object.keys(patch).length > 0) {
-        await patchBubbles(m.itemId, patch as any);
-      }
-    } catch (e) {
-      console.error("[obr-suite/group-saves] fireGroupHp failed for", m.itemId, e);
-    }
+    await applyHpDeltaToToken(m.itemId, mode, value, field);
   }
+}
+
+// === Group-save resolve flow =================================
+//
+// After every fireSave() emits its per-token rolls we register a
+// pending entry keyed by collectiveId. A BROADCAST_DICE_ROLL listener
+// (registered once in setupGroupSaves) collects each roll's `total`
+// by itemId. When the count reaches the expected size we open the
+// resolve modal and push the per-token results into it.
+//
+// Modal interaction (channels in the constants block above):
+//   - BC_RESOLVE_STATE   bg → modal: { cid, ability, results }
+//   - BC_RESOLVE_REQUEST modal → bg: { cid }   (re-push state)
+//   - BC_RESOLVE_APPLY   modal → bg: { cid, mode, dc, value, field }
+//   - BC_RESOLVE_DONE    modal → bg: { cid }   (close modal)
+//
+// The user can apply multiple times before clicking 好了 — each apply
+// reads the CURRENT bubbles state (so chained −30 then +5 works) and
+// applies relative to that. The save totals are LOCKED at fire time
+// (subsequent applies don't re-roll), so the half-on-success math
+// always uses the original results.
+interface PendingResolve {
+  cid: string;
+  ability: keyof SelectedMonster["saves"];
+  expected: number;
+  results: Map<string, { name: string; total: number }>;
+  selection: SelectedMonster[];
+  timer: ReturnType<typeof setTimeout> | null;
+  modalOpen: boolean;
+}
+const pendingResolves = new Map<string, PendingResolve>();
+
+function buildResolveStatePayload(p: PendingResolve) {
+  const out: Array<{ itemId: string; name: string; total: number }> = [];
+  for (const m of p.selection) {
+    const r = p.results.get(m.itemId);
+    if (!r) continue;
+    out.push({ itemId: m.itemId, name: r.name, total: r.total });
+  }
+  return { cid: p.cid, ability: p.ability, results: out };
+}
+
+async function broadcastResolveState(p: PendingResolve): Promise<void> {
+  try {
+    await OBR.broadcast.sendMessage(
+      BC_RESOLVE_STATE,
+      buildResolveStatePayload(p),
+      { destination: "LOCAL" },
+    );
+  } catch {}
+}
+
+async function openResolveModal(p: PendingResolve): Promise<void> {
+  if (p.modalOpen) {
+    await broadcastResolveState(p);
+    return;
+  }
+  p.modalOpen = true;
+  try {
+    await OBR.modal.open({
+      id: RESOLVE_MODAL_ID,
+      url: `${RESOLVE_URL}?cid=${encodeURIComponent(p.cid)}`,
+      fullScreen: true,
+      hideBackdrop: true,
+      // Modals don't dismiss on click-away by default, but be explicit:
+      // the "好了" button is the ONLY way out.
+      hidePaper: true,
+    });
+  } catch (e) {
+    console.error("[obr-suite/group-saves] open resolve modal failed", e);
+    p.modalOpen = false;
+    return;
+  }
+  // Push state after a short tick so the iframe has time to register
+  // its BC_RESOLVE_STATE listener. The modal's own onReady also
+  // requests a re-push (BC_RESOLVE_REQUEST), so this is just the
+  // happy-path fast push.
+  setTimeout(() => { void broadcastResolveState(p); }, 80);
+}
+
+async function closeResolveModal(cid: string): Promise<void> {
+  const p = pendingResolves.get(cid);
+  if (!p) return;
+  if (p.timer) clearTimeout(p.timer);
+  pendingResolves.delete(cid);
+  if (p.modalOpen) {
+    try { await OBR.modal.close(RESOLVE_MODAL_ID); } catch {}
+  }
+}
+
+function startResolveBatch(cid: string, ability: keyof SelectedMonster["saves"]): void {
+  // Snapshot the selection at fire time — `lastSelection` mutates as
+  // OBR.player selection changes, but a save batch should resolve
+  // against whoever rolled. Same for the per-token name (the canvas
+  // name might be edited mid-roll otherwise).
+  const selection: SelectedMonster[] = lastSelection.map((m) => ({ ...m, saves: { ...m.saves } }));
+  if (selection.length === 0) return;
+  // Safety timer: if some rolls never broadcast (effect modal crashed,
+  // network blip), still open the modal after 8 s with whatever we
+  // have. The resolve logic just skips tokens with no result.
+  const timer = setTimeout(() => {
+    const p = pendingResolves.get(cid);
+    if (!p) return;
+    if (p.modalOpen) return;
+    void openResolveModal(p);
+  }, 8000);
+  pendingResolves.set(cid, {
+    cid,
+    ability,
+    expected: selection.length,
+    results: new Map(),
+    selection,
+    timer,
+    modalOpen: false,
+  });
+}
+
+function recordResolveResult(payload: DiceRollPayload): void {
+  const cid = payload.collectiveId;
+  if (!cid) return;
+  const p = pendingResolves.get(cid);
+  if (!p) return;
+  const itemId = payload.itemId;
+  if (!itemId) return;
+  if (p.results.has(itemId)) return; // dedupe LOCAL+REMOTE copies
+  // Resolve display name from the snapshot so renames mid-roll don't
+  // confuse the modal.
+  const seen = p.selection.find((m) => m.itemId === itemId);
+  if (!seen) return; // payload's itemId isn't in our batch
+  p.results.set(itemId, { name: seen.name, total: payload.total });
+  if (p.results.size >= p.expected) {
+    if (p.timer) { clearTimeout(p.timer); p.timer = null; }
+    void openResolveModal(p);
+  }
+}
+
+async function applyResolveBatch(
+  cid: string,
+  mode: "dmg" | "heal" | "set",
+  dc: number | null,
+  value: number,
+  field: "health" | "max health" | "armor class",
+): Promise<void> {
+  const p = pendingResolves.get(cid);
+  if (!p) return;
+  for (const m of p.selection) {
+    const r = p.results.get(m.itemId);
+    // Tokens whose roll never came back are skipped (they get nothing
+    // applied; the DM can edit them manually after dismissing).
+    if (!r) continue;
+    let toApply = value;
+    if (mode === "dmg" && dc != null && Number.isFinite(dc)) {
+      // 5e standard save-half: succeed (>= DC) → half floor, fail → full.
+      toApply = r.total >= dc ? Math.floor(value / 2) : value;
+    }
+    // For heal / set the DC isn't meaningful (no "half-heal-on-fail"
+    // standard rule); apply uniformly. For dmg with no DC entered,
+    // we shouldn't be here (modal blocks that path), but fall back
+    // to full damage to avoid silent misapplies.
+    if (toApply === 0 && mode !== "set") continue;
+    await applyHpDeltaToToken(m.itemId, mode, toApply, field);
+  }
+  // Re-broadcast state so the modal can refresh per-token tints if it
+  // was holding any cached "applied" state. (Currently it doesn't,
+  // but cheap to send and future-proof.)
+  await broadcastResolveState(p);
 }
 
 async function fireSave(
@@ -416,6 +607,16 @@ async function fireSave(
   const lang = getLocalLang();
   const lbl = abilityLabel(ability, lang);
   const collectiveId = `col-${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
+  // 2026-05-11 — register a pending-resolve batch BEFORE we fire the
+  // rolls so the BROADCAST_DICE_ROLL listener (registered in
+  // setupGroupSaves) starts capturing totals as soon as the first
+  // roll lands. The modal opens once `expected` results have arrived.
+  // Hidden saves (e.g. invisible monster) intentionally skip the
+  // modal — the DM is rolling those privately and there's nothing
+  // to bulk-apply group-wise; they'll edit HP manually.
+  if (!opts.hidden) {
+    startResolveBatch(collectiveId, ability);
+  }
   // Per-token roll. Each one carries its own save bonus so the dice
   // animation + history reflect each monster's individual outcome.
   // collectiveId groups them in the history popover as one collective.
@@ -524,6 +725,64 @@ export async function setupGroupSaves(): Promise<void> {
       await broadcastState();
     }),
   );
+
+  // 2026-05-11 — group-save resolve flow listeners.
+  //
+  // (1) Capture per-token roll totals as they arrive. We listen on
+  //     BROADCAST_DICE_ROLL so we work for ANY roll path (fireQuickRoll
+  //     fan-out goes through dice/index.ts handleQuickRoll →
+  //     broadcastDiceRoll). The recordResolveResult helper filters by
+  //     collectiveId so unrelated rolls (initiative, ad-hoc, etc.) are
+  //     ignored.
+  unsubs.push(
+    OBR.broadcast.onMessage(BROADCAST_DICE_ROLL, (event) => {
+      const data = event.data as DiceRollPayload | undefined;
+      if (!data || !data.collectiveId) return;
+      recordResolveResult(data);
+    }),
+  );
+
+  // (2) Modal asks for state on cold-mount race.
+  unsubs.push(
+    OBR.broadcast.onMessage(BC_RESOLVE_REQUEST, async (event) => {
+      const data = event.data as { cid?: string } | undefined;
+      const cid = data?.cid;
+      if (!cid) return;
+      const p = pendingResolves.get(cid);
+      if (!p) return;
+      await broadcastResolveState(p);
+    }),
+  );
+
+  // (3) Modal applies an HP change with the save-half rule.
+  unsubs.push(
+    OBR.broadcast.onMessage(BC_RESOLVE_APPLY, async (event) => {
+      const data = event.data as
+        | { cid?: string; mode?: string; dc?: number | null; value?: number; field?: string }
+        | undefined;
+      const cid = data?.cid;
+      const mode = data?.mode;
+      const value = typeof data?.value === "number" ? data.value : NaN;
+      const field = data?.field === "max health" || data?.field === "armor class"
+        ? data.field
+        : "health";
+      if (!cid) return;
+      if (!Number.isFinite(value)) return;
+      if (mode !== "dmg" && mode !== "heal" && mode !== "set") return;
+      const dc = typeof data?.dc === "number" && Number.isFinite(data.dc) ? data.dc : null;
+      await applyResolveBatch(cid, mode, dc, Math.max(0, Math.min(9999, Math.round(value))), field);
+    }),
+  );
+
+  // (4) Modal dismissed via "好了".
+  unsubs.push(
+    OBR.broadcast.onMessage(BC_RESOLVE_DONE, async (event) => {
+      const data = event.data as { cid?: string } | undefined;
+      const cid = data?.cid;
+      if (!cid) return;
+      await closeResolveModal(cid);
+    }),
+  );
   // Re-broadcast state when the user flips suite language so the
   // popover labels refresh.
   unsubs.push(
@@ -538,5 +797,10 @@ export async function setupGroupSaves(): Promise<void> {
 export async function teardownGroupSaves(): Promise<void> {
   for (const u of unsubs.splice(0)) u();
   await closePopover();
+  // Close any open resolve modal (and clear timers) so a scene
+  // teardown doesn't leak a half-open dialog.
+  for (const cid of [...pendingResolves.keys()]) {
+    await closeResolveModal(cid);
+  }
   lastSelection = [];
 }

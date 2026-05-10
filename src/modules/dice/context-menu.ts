@@ -29,7 +29,10 @@ const EDGE_MARGIN = 8;
 const QUICK_POPOVER_ID = "com.obr-suite/rollable-quick";
 const QUICK_URL = assetUrl("dice-quick-popup.html");
 const QUICK_POPOVER_W = 320;
-const QUICK_POPOVER_H = 296;
+// 2026-05-10b — was 296 (one 30 px 暗骰 long bar). Replaced by a
+// 4-cell mini-row at 18 px flush under the main action row. Net
+// height saving ≈14 px.
+const QUICK_POPOVER_H = 282;
 
 // Returns the iframe's TOP-LEFT corner in OBR viewport pixels, used to
 // translate iframe-local clientX/clientY into viewport coords for

@@ -149,19 +149,36 @@ html,body{
 }
 .btn-act.crit:hover{background:rgba(255,167,38,0.16);border-color:rgba(255,167,38,0.6)}
 
-/* DM-only dark roll — long bar below */
-.btn-dark{
-  height:30px;width:100%;
-  background:rgba(187,135,221,0.10);
-  border:1px solid rgba(187,135,221,0.40);
-  color:var(--dark);
-  border-radius:6px;
-  font-size:11.5px;font-weight:700;
-  font-family:inherit;cursor:pointer;
-  display:inline-flex;align-items:center;justify-content:center;gap:4px;
-  transition:background .12s, border-color .12s;
+/* DM-only dark-roll mini-row — same column layout as .actions above
+   so each small button sits flush under its parent mode (劣势/普通/
+   优势/重击). Hidden entirely on player clients via JS toggling
+   .actions-dark.is-dm — players never see the row at all. */
+.actions-dark{
+  display:none;          /* .is-dm enables on DM client */
+  gap:5px;align-items:stretch;
+  margin-top:-2px;        /* visually flush under .actions */
 }
-.btn-dark:hover{background:rgba(187,135,221,0.20);border-color:rgba(187,135,221,0.6)}
+.actions-dark.is-dm{display:flex}
+.btn-dark-mini{
+  flex:1;height:18px;
+  background:rgba(187,135,221,0.10);
+  border:1px solid rgba(187,135,221,0.35);
+  border-top-left-radius:0;border-top-right-radius:0;
+  border-bottom-left-radius:5px;border-bottom-right-radius:5px;
+  color:var(--dark);
+  font-size:10px;font-weight:700;letter-spacing:0.3px;
+  font-family:inherit;cursor:pointer;
+  display:inline-flex;align-items:center;justify-content:center;gap:3px;
+  padding:0 4px;
+  transition:background .12s, border-color .12s, color .12s;
+}
+.btn-dark-mini:hover{background:rgba(187,135,221,0.22);border-color:rgba(187,135,221,0.65);color:#d6b1ee}
+/* The 重击 column was narrower in .actions (flex:0 0 56px); mirror
+   that here so the button aligns under its parent. */
+.btn-dark-mini.crit{flex:0 0 56px}
+/* Tiny "暗" prefix dot — keeps the per-mode label readable in the
+   limited width without a verbose "暗骰" word. */
+.btn-dark-mini .ico{font-size:8px;opacity:0.7}
 </style>
 </head>
 <body>
@@ -195,9 +212,16 @@ html,body{
     <button class="btn-act crit"   data-act="crit"   type="button" title="重击 = 表达式中所有骰子翻倍"><span class="ico">✦</span><span data-l="crit">重击</span></button>
   </div>
 
-  <button class="btn-dark" id="btnDark" data-act="dark" type="button" style="display:none">
-    <span class="ico">●</span><span data-l="dark">暗骰（仅 DM 可见结果）</span>
-  </button>
+  <!-- DM-only dark variants — one per mode, flush under the row above.
+       Each performs the corresponding action with hidden:true so the
+       result stays on the DM client only. Player clients never see
+       this row (CSS is `display:none` until JS adds .is-dm). -->
+  <div class="actions-dark" id="darkActions">
+    <button class="btn-dark-mini dis"    data-act="dark-dis"    type="button" title="暗劣势"><span class="ico">●</span><span data-l="dis">劣势</span></button>
+    <button class="btn-dark-mini normal" data-act="dark-roll"   type="button" title="暗普通"><span class="ico">●</span><span data-l="roll">普通</span></button>
+    <button class="btn-dark-mini adv"    data-act="dark-adv"    type="button" title="暗优势"><span class="ico">●</span><span data-l="adv">优势</span></button>
+    <button class="btn-dark-mini crit"   data-act="dark-crit"   type="button" title="暗重击"><span class="ico">●</span><span data-l="crit">重击</span></button>
+  </div>
 </div>
 
 <script type="module">
@@ -363,23 +387,32 @@ async function fireRoll(opts) {
 }
 
 OBR.onReady(async () => {
-  // Show the dark-roll button only for the GM client.
+  // Show the dark-roll mini-row only for the GM client. 2026-05-10 —
+  // was a single long "暗骰" bar; user wanted four small per-mode
+  // dark variants (one under each of 劣势/普通/优势/重击).
   try {
     const role = await OBR.player.getRole();
     if (role === "GM") {
-      const dark = document.getElementById("btnDark");
-      if (dark) dark.style.display = "";
+      const darkRow = document.getElementById("darkActions");
+      if (darkRow) darkRow.classList.add("is-dm");
     }
   } catch {}
 
   document.querySelectorAll("[data-act]").forEach((el) => {
     el.addEventListener("click", () => {
       const act = el.dataset.act ?? "";
-      if (act === "roll")        void fireRoll({});
-      else if (act === "adv")    void fireRoll({ advMode: "adv" });
-      else if (act === "dis")    void fireRoll({ advMode: "dis" });
-      else if (act === "crit")   void fireRoll({ critMode: true });
-      else if (act === "dark")   void fireRoll({ hidden: true });
+      // Light variants — broadcast the roll to the room.
+      if (act === "roll")             void fireRoll({});
+      else if (act === "adv")         void fireRoll({ advMode: "adv" });
+      else if (act === "dis")         void fireRoll({ advMode: "dis" });
+      else if (act === "crit")        void fireRoll({ critMode: true });
+      // Dark variants — same as the matching light mode but hidden:true
+      // so only the DM client receives the result. Players still hear
+      // the SFX (handled by the bg's receive listener).
+      else if (act === "dark-roll")   void fireRoll({ hidden: true });
+      else if (act === "dark-adv")    void fireRoll({ hidden: true, advMode: "adv" });
+      else if (act === "dark-dis")    void fireRoll({ hidden: true, advMode: "dis" });
+      else if (act === "dark-crit")   void fireRoll({ hidden: true, critMode: true });
     });
   });
 

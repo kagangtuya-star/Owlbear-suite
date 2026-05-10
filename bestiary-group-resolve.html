@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<title>群体豁免结算</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box;transition:none!important;animation:none!important}
+:root{
+  --bg:rgba(20,24,38,0.97);
+  --bg-strong:#2c3044;
+  --bg-card:#262a3a;
+  --border:rgba(255,255,255,0.10);
+  --border-strong:rgba(255,255,255,0.20);
+  --text:#e6e8ee;
+  --text-dim:#9aa0b3;
+  --accent:#5dade2;
+  --good:#7be0a0;
+  --bad:#ff8b7a;
+  --warn:#ffb74d;
+  --gold:#f5a623;
+}
+html,body{
+  height:100%;width:100%;overflow:hidden;background:transparent;
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif;
+  color:var(--text);font-size:13px;
+}
+/* Full-screen backdrop — modal lives full-screen so OBR can render
+   the dim layer behind it. The card sits centered. The whole sheet
+   eats pointer events; only the "好了" button below dismisses. */
+.shell{
+  position:absolute;inset:0;
+  display:flex;align-items:center;justify-content:center;
+  padding:24px;
+  background:rgba(0,0,0,0.45);
+}
+.card{
+  width:min(100%, 460px);
+  max-height:calc(100vh - 48px);
+  display:flex;flex-direction:column;
+  background:var(--bg);
+  border:1px solid var(--border-strong);
+  border-radius:12px;
+  box-shadow:0 14px 38px rgba(0,0,0,0.6);
+  overflow:hidden;
+}
+.head{
+  padding:14px 16px 10px;
+  border-bottom:1px solid var(--border);
+  display:flex;flex-direction:column;gap:4px;
+}
+.head .ttl{
+  font-size:14px;font-weight:800;color:var(--gold);
+  letter-spacing:0.4px;
+  display:inline-flex;align-items:center;gap:6px;
+}
+.head .sub{font-size:11px;color:var(--text-dim);line-height:1.55}
+.body{
+  padding:12px 16px;
+  display:flex;flex-direction:column;gap:10px;
+  overflow-y:auto;
+}
+.body::-webkit-scrollbar{width:4px}
+.body::-webkit-scrollbar-thumb{background:var(--border-strong);border-radius:2px}
+
+/* Per-token result list. Each row shows the token's name + the
+   final total. The DC threshold below is compared against this
+   number when applying. */
+.results{
+  display:flex;flex-direction:column;
+  border:1px solid var(--border);
+  border-radius:8px;
+  overflow:hidden;
+}
+.results .row{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:6px 10px;
+  font-size:12px;
+}
+.results .row + .row{border-top:1px solid var(--border)}
+.results .name{color:var(--text)}
+.results .total{
+  font-family:ui-monospace,Consolas,monospace;
+  font-weight:800;font-size:13px;
+  font-variant-numeric:tabular-nums;
+  padding:1px 8px;border-radius:4px;
+}
+.results .total.fail{background:rgba(231,76,60,0.18);color:var(--bad)}
+.results .total.pass{background:rgba(46,204,113,0.18);color:var(--good)}
+
+/* Numeric input row — DC + value, then ±/= action buttons. */
+.input-row{
+  display:grid;
+  grid-template-columns:auto 1fr;
+  gap:6px 10px;
+  align-items:center;
+}
+.input-row label{
+  font-size:11px;color:var(--text-dim);
+  letter-spacing:0.3px;text-transform:uppercase;
+}
+.input-row input,.input-row select{
+  height:32px;
+  background:var(--bg-card);
+  border:1px solid var(--border);
+  border-radius:6px;
+  color:var(--text);
+  padding:0 10px;
+  font-family:ui-monospace,Consolas,monospace;
+  font-size:14px;font-weight:700;
+  font-variant-numeric:tabular-nums;
+  outline:none;
+}
+.input-row input:focus,.input-row select:focus{border-color:var(--accent)}
+.input-row select{font-family:inherit;font-size:12px;font-weight:600}
+
+.actions{
+  display:grid;
+  grid-template-columns:1fr 1fr 1fr;
+  gap:6px;
+}
+.btn-act{
+  height:38px;
+  background:var(--bg-strong);
+  border:1px solid var(--border-strong);
+  color:var(--text);
+  border-radius:6px;
+  font-size:13px;font-weight:800;
+  font-family:inherit;cursor:pointer;
+  transition:background .12s, color .12s, border-color .12s;
+}
+.btn-act.dmg{color:var(--bad);border-color:rgba(231,76,60,0.40)}
+.btn-act.dmg:hover{background:rgba(231,76,60,0.18);border-color:rgba(231,76,60,0.65)}
+.btn-act.heal{color:var(--good);border-color:rgba(46,204,113,0.40)}
+.btn-act.heal:hover{background:rgba(46,204,113,0.18);border-color:rgba(46,204,113,0.65)}
+.btn-act.set{color:var(--accent);border-color:rgba(93,173,226,0.40)}
+.btn-act.set:hover{background:rgba(93,173,226,0.18);border-color:rgba(93,173,226,0.65)}
+
+.foot{
+  padding:10px 16px 14px;
+  border-top:1px solid var(--border);
+  display:flex;flex-direction:column;gap:8px;
+}
+.applied-msg{
+  font-size:11px;color:var(--text-dim);
+  min-height:14px;line-height:1.4;text-align:center;
+}
+.applied-msg.flash{color:var(--good);font-weight:600}
+.btn-ok{
+  height:38px;width:100%;
+  background:var(--gold);
+  border:none;
+  color:#1a1a1a;
+  border-radius:6px;
+  font-size:13.5px;font-weight:800;letter-spacing:0.5px;
+  font-family:inherit;cursor:pointer;
+  transition:filter .12s;
+}
+.btn-ok:hover{filter:brightness(1.10)}
+
+.hint{
+  font-size:10.5px;color:var(--text-dim);
+  line-height:1.6;
+}
+.hint code{
+  font-family:ui-monospace,Consolas,monospace;
+  background:rgba(255,255,255,0.06);
+  padding:0 4px;border-radius:3px;
+  color:var(--text);
+}
+</style>
+</head>
+<body>
+<div class="shell">
+  <div class="card">
+    <div class="head">
+      <div class="ttl">⚖ 群体豁免结算 <span id="abilityLbl" style="color:var(--text-dim);font-weight:600;font-size:12px"></span></div>
+      <div class="sub">输入 <b>DC</b> 与 <b>HP 数值</b>，按 <span style="color:var(--bad)">−</span> 时：豁免 <b>失败</b>（结果 &lt; DC）扣全额，<b>成功</b>扣一半（向下取整）。<span style="color:var(--text-dim)">+</span> / <span style="color:var(--text-dim)">=</span> 不参与豁免分组。</div>
+    </div>
+
+    <div class="body">
+      <div class="results" id="results"><!-- per-token rows injected by JS --></div>
+
+      <div class="input-row">
+        <label>DC</label>
+        <input id="dcInput" type="number" min="0" max="40" step="1" placeholder="例：14">
+
+        <label>字段</label>
+        <select id="fieldSelect">
+          <option value="health">HP</option>
+          <option value="max health">Max HP</option>
+          <option value="armor class">AC</option>
+        </select>
+
+        <label>数值</label>
+        <input id="valueInput" type="number" min="0" max="9999" step="1" placeholder="例：30">
+      </div>
+
+      <div class="actions">
+        <button class="btn-act dmg"  data-mode="dmg"  type="button">−（失败全扣 / 成功半扣）</button>
+        <button class="btn-act heal" data-mode="heal" type="button">+（统一加）</button>
+        <button class="btn-act set"  data-mode="set"  type="button">=（设为）</button>
+      </div>
+
+      <div class="hint">
+        例：DC <code>14</code>、数值 <code>30</code> 点 <span style="color:var(--bad)">−</span>：投出 <code>13</code> 的 token 扣 30，投出 <code>17</code> 的 token 扣 15。可多次操作叠加（如先 −30 再 +5），最后再点 <b>好了</b> 关闭。
+      </div>
+    </div>
+
+    <div class="foot">
+      <div class="applied-msg" id="appliedMsg"></div>
+      <button class="btn-ok" id="btnOk" type="button">好了</button>
+    </div>
+  </div>
+</div>
+
+<script type="module">
+import OBR from "https://esm.sh/@owlbear-rodeo/sdk@3.1.0";
+
+const MODAL_ID = "com.obr-suite/bestiary-group-resolve";
+// Channels — group-saves.ts owns the bg side.
+const BC_RESOLVE_STATE = "com.obr-suite/bestiary-group-resolve-state";
+const BC_RESOLVE_APPLY = "com.obr-suite/bestiary-group-resolve-apply";
+const BC_RESOLVE_DONE  = "com.obr-suite/bestiary-group-resolve-done";
+const BC_RESOLVE_REQUEST = "com.obr-suite/bestiary-group-resolve-request";
+
+const params = new URLSearchParams(location.search);
+const cid = params.get("cid") || "";
+
+const lang = (() => {
+  try { const v = localStorage.getItem("obr-suite/lang"); if (v === "en" || v === "zh") return v; } catch {}
+  return "zh";
+})();
+
+const ABILITY_ZH = { str:"力量", dex:"敏捷", con:"体质", int:"智力", wis:"感知", cha:"魅力" };
+const ABILITY_EN = { str:"STR",  dex:"DEX",  con:"CON",  int:"INT",  wis:"WIS",  cha:"CHA" };
+
+const resultsEl = document.getElementById("results");
+const dcInput   = document.getElementById("dcInput");
+const valueInput= document.getElementById("valueInput");
+const fieldSel  = document.getElementById("fieldSelect");
+const abilityLbl= document.getElementById("abilityLbl");
+const appliedMsg= document.getElementById("appliedMsg");
+const btnOk     = document.getElementById("btnOk");
+
+function escapeHtml(s) {
+  return String(s ?? "")
+    .replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;")
+    .replaceAll("\"","&quot;").replaceAll("'","&#39;");
+}
+
+let lastResults = []; // [{itemId, name, total}]
+
+function paintResults() {
+  const dc = Number.parseInt(dcInput.value, 10);
+  const haveDc = Number.isFinite(dc);
+  resultsEl.innerHTML = lastResults
+    .map((r) => {
+      // Pass / fail tint shows only when the DC field is filled —
+      // before that, totals render neutrally so the user doesn't see
+      // a misleading "all failed" colour band.
+      const cls = !haveDc ? "" : (r.total < dc ? "fail" : "pass");
+      return `
+        <div class="row">
+          <span class="name">${escapeHtml(r.name)}</span>
+          <span class="total ${cls}">${r.total}</span>
+        </div>`;
+    })
+    .join("") || `<div class="row" style="color:var(--text-dim);justify-content:center">（暂无投掷结果，等待中…）</div>`;
+}
+
+function showApplied(text) {
+  appliedMsg.textContent = text;
+  appliedMsg.classList.add("flash");
+  setTimeout(() => appliedMsg.classList.remove("flash"), 800);
+}
+
+function applyAction(mode) {
+  const dcRaw = dcInput.value.trim();
+  const dc = dcRaw === "" ? null : Number.parseInt(dcRaw, 10);
+  const value = Number.parseInt(valueInput.value.trim(), 10);
+  if (!Number.isFinite(value)) {
+    showApplied(lang === "zh" ? "请填写数值" : "Enter a value");
+    return;
+  }
+  // For "dmg" the DC is required to drive the half-on-success branch;
+  // heal / set ignore DC entirely so we let them through with null.
+  if (mode === "dmg" && (dc == null || !Number.isFinite(dc))) {
+    showApplied(lang === "zh" ? "扣血请先填 DC" : "DC required for damage");
+    return;
+  }
+  try {
+    OBR.broadcast.sendMessage(
+      BC_RESOLVE_APPLY,
+      { cid, mode, dc, value, field: fieldSel.value },
+      { destination: "LOCAL" },
+    );
+  } catch (e) { console.error("[group-resolve] apply broadcast failed", e); }
+  // Optimistic feedback — bg actually mutates, this is just UX
+  // confirmation. The user can chain (−30 then +5) without losing
+  // the DC/field selections.
+  if (mode === "dmg") {
+    showApplied(lang === "zh" ? `已应用：失败者 −${value}，成功者 −${Math.floor(value / 2)}` : `Applied: fail −${value}, success −${Math.floor(value / 2)}`);
+  } else if (mode === "heal") {
+    showApplied(lang === "zh" ? `已应用：全员 +${value}` : `Applied: +${value} to all`);
+  } else if (mode === "set") {
+    showApplied(lang === "zh" ? `已应用：全员 = ${value}` : `Applied: set to ${value}`);
+  }
+}
+
+document.querySelectorAll(".btn-act").forEach((b) => {
+  b.addEventListener("click", () => applyAction(b.dataset.mode));
+});
+
+dcInput.addEventListener("input", paintResults);
+
+btnOk.addEventListener("click", () => {
+  try {
+    OBR.broadcast.sendMessage(BC_RESOLVE_DONE, { cid }, { destination: "LOCAL" });
+  } catch {}
+  // Bg closes the modal in response to BC_RESOLVE_DONE; no local
+  // close call so we don't race with the close path on slow bg
+  // clients.
+});
+
+OBR.onReady(async () => {
+  // Listen for state pushes from bg. Bg sends one immediately after
+  // open + on each apply (so the per-token totals stay in sync if
+  // the same modal could ever be reopened on the same cid).
+  OBR.broadcast.onMessage(BC_RESOLVE_STATE, (event) => {
+    const data = event.data;
+    if (!data || data.cid !== cid) return;
+    if (Array.isArray(data.results)) lastResults = data.results;
+    if (typeof data.ability === "string") {
+      const tbl = lang === "zh" ? ABILITY_ZH : ABILITY_EN;
+      abilityLbl.textContent = tbl[data.ability] ? `· ${tbl[data.ability]}豁免` : "";
+    }
+    paintResults();
+  });
+  // Ask bg to push the latest state in case we open AFTER the
+  // initial post-fire push (race on slow iframe init).
+  try {
+    OBR.broadcast.sendMessage(BC_RESOLVE_REQUEST, { cid }, { destination: "LOCAL" });
+  } catch {}
+});
+</script>
+</body>
+</html>
