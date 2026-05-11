@@ -421,15 +421,24 @@ interface WebmDescriptor {
   buffId: string;
   /** Absolute URL of the WebM (resolved via assetUrl() at describe time). */
   url: string;
-  /** Top-left position in scene coords (so the WebM bbox is centred
-   *  on the token). */
-  position: { x: number; y: number };
-  /** Scale.x = scale.y applied to the 192-intrinsic WebM so it renders
-   *  at the token's natural footprint. */
+  /** World-coord centre of the rendered WebM (= token centre). The
+   *  Image item is built with ImageGrid.offset = (intrinsicSize/2,
+   *  intrinsicSize/2) so this `centre` lands at the WebM's middle —
+   *  fixing the earlier upper-left drift bug caused by treating
+   *  ImageContent.width/dpi as scene pixels. */
+  centre: { x: number; y: number };
+  /** Scale.x = scale.y applied so the WebM renders at the token's
+   *  natural footprint × per-buff webmScale. */
   scale: number;
   /** Intrinsic WebM resolution (assumed square 192×192 — matches the
-   *  generator's defaults). Used as ImageContent.width/height. */
+   *  generator's defaults). Used as ImageContent.width/height AND as
+   *  the offset (half) for centre-anchor positioning. */
   intrinsicSize: number;
+  /** Scene grid DPI captured at describe-time. Plugged into
+   *  ImageGrid.dpi so OBR scales the image correctly — using the
+   *  image's intrinsic 192 as dpi made it render (192/sceneDpi)
+   *  smaller than expected. */
+  sceneDpi: number;
   /** zIndex slot — token.zIndex * STACK_MULT + SLOT_WEBM. */
   zIndex: number;
 }
@@ -507,9 +516,13 @@ function describe(token: Image, buffs: BuffDef[], sceneDpi: number): TokenDescri
       webms.push({
         buffId: b.id,
         url: assetUrl(b.webmAsset),
-        position: { x: cx - footprint / 2, y: cy - footprint / 2 },
+        // 2026-05-15 — centre-anchor positioning (was top-left). Pair
+        // with buildWebmItem's offset=(intrinsicSize/2, intrinsicSize/2)
+        // so OBR places the WebM's midpoint at this scene coord.
+        centre: { x: cx, y: cy },
         scale,
         intrinsicSize: DEFAULT_WEBM_INTRINSIC_SIZE,
+        sceneDpi,
         // SLOT_WEBM (200) is above SLOT_GLYPH (100) so WebMs draw over
         // any sibling curved-band glyphs on the same token.
         zIndex: stackBase + SLOT_WEBM,
@@ -719,12 +732,18 @@ function buildBgItem(token: Image, d: PillBgDescriptor): Item {
 function buildWebmItem(token: Image, d: WebmDescriptor): Item {
   return buildImage(
     { width: d.intrinsicSize, height: d.intrinsicSize, mime: "video/webm", url: d.url },
-    // ImageGrid: dpi describes the image's "natural" grid size, offset
-    // is the local origin within the image. For our square WebM we
-    // treat the centre as origin; OBR's scale handles the rest.
-    { dpi: d.intrinsicSize, offset: { x: 0, y: 0 } },
+    // 2026-05-15 — ImageGrid recipe matches Embers' working pattern:
+    //   dpi    = scene grid DPI (NOT the image's intrinsic resolution).
+    //            Critical — using the image's intrinsic 192 here made
+    //            OBR think 192px = 1 grid cell and rendered the image
+    //            at (192 / sceneDpi)× the intended size, with the
+    //            top-left-anchored position offset showing as upper-
+    //            left drift.
+    //   offset = image centre. Combined with .position(centre) below,
+    //            the WebM's midpoint lands exactly on the token centre.
+    { dpi: d.sceneDpi, offset: { x: d.intrinsicSize / 2, y: d.intrinsicSize / 2 } },
   )
-    .position(d.position)
+    .position(d.centre)
     .scale({ x: d.scale, y: d.scale })
     .layer("ATTACHMENT")
     .attachedTo(token.id)

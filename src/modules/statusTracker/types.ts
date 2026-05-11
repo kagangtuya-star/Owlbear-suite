@@ -137,36 +137,48 @@ export function hexToRgb01(hex: string): [number, number, number] {
 // page → ✎ icon → effect picker). The old `effect` field stays in the
 // types for back-compat but is now ignored unless `webmAsset` is unset.
 export const DEFAULT_BUFFS: BuffDef[] = [
+  // === Animated / directional ===
   { id: "paralyzed",    name: "麻痹 ⚡",       color: "#ffff00", group: "异常",  webmAsset: "buff-fx/flash-lightning.webm" },
   { id: "charmed",      name: "魅惑 💘",       color: "#ff00d0", group: "异常",  webmAsset: "buff-fx/custom-charmed.webm",      webmScale: 1.6 },
-  { id: "invisible",    name: "隐形 👻",       color: "#cccccc", group: "Buffs", webmAsset: "buff-fx/custom-invisible.webm",    webmScale: 1.0 },
-  { id: "bardic",       name: "诗人激励 🎵",   color: "#7300ff", group: "Buffs", webmAsset: "buff-fx/custom-bardic.webm",       webmScale: 2.0 },
-  // "被骂" renamed to 劣势 (disadvantage) per user spec — kept id="vicious" for back-compat.
-  { id: "vicious",      name: "劣势 🔻",       color: "#3b82f6", group: "异常",  webmAsset: "buff-fx/custom-disadvantage.webm", webmScale: 1.2 },
-  { id: "deafened",     name: "耳聋 🎧",       color: "#c0c0c0", group: "异常",  webmAsset: "buff-fx/custom-deafened.webm",     webmScale: 1.1 },
-  { id: "slowed",       name: "缓慢术 ⌛",     color: "#e805f4", group: "异常",  webmAsset: "buff-fx/custom-slowed.webm",       webmScale: 1.0 },
-  { id: "guidance",     name: "神导术 👍",     color: "#ffff00", group: "Buffs", webmAsset: "buff-fx/pulse-thumbs_up.webm" },
-  { id: "blessing",     name: "祝福术 🧧",     color: "#ffff00", group: "Buffs", webmAsset: "buff-fx/radial-sparkles.webm" },
-  { id: "petrified",    name: "石化 🗿",       color: "#8b7d6b", group: "异常",  webmAsset: "buff-fx/static-moai.webm" },
+  // 2026-05-12 — invisible REVERTED to fade-ghost (the box version
+  // was a bad fit per user feedback).
+  { id: "invisible",    name: "隐形 👻",       color: "#cccccc", group: "Buffs", webmAsset: "buff-fx/fade-ghost.webm",          webmScale: 1.0 },
+  { id: "bardic",       name: "诗人激励 🎵",   color: "#7300ff", group: "Buffs", webmAsset: "buff-fx/custom-bardic.webm",       webmScale: 1.4 },
+  // 2026-05-12 — "被骂" renamed to 劣势 (disadvantage). Pure ⬇ arrows,
+  // no rotation, falling down. Yellow ⬆ counterpart below.
+  { id: "vicious",      name: "劣势 ⬇",       color: "#3b82f6", group: "异常",  webmAsset: "buff-fx/custom-disadvantage.webm", webmScale: 1.0 },
+  { id: "advantage",    name: "优势 ⬆",       color: "#ffcc00", group: "Buffs", webmAsset: "buff-fx/custom-advantage.webm",    webmScale: 1.0 },
   { id: "stunned",      name: "眩晕 💫",       color: "#f5deb3", group: "异常",  webmAsset: "buff-fx/orbit-dizzy.webm" },
-  { id: "blinded",      name: "目盲 🕶️",      color: "#4a4a4a", group: "异常",  webmAsset: "buff-fx/static-sunglasses.webm" },
-  { id: "hunters_mark", name: "猎人印记 🎯",   color: "#00ff26", group: "Extra", webmAsset: "buff-fx/custom-hunters_mark.webm", webmScale: 1.1 },
-  { id: "raging",       name: "狂暴 😠",       color: "#f20808", group: "Extra", webmAsset: "buff-fx/shake-angry.webm" },
   { id: "wet",          name: "濡湿 💧",       color: "#87cefa", group: "异常",  webmAsset: "buff-fx/rain-drop.webm" },
-  { id: "dead",         name: "死亡 💀",       color: "#000000", group: "Extra", webmAsset: "buff-fx/static-skull.webm" },
-  { id: "restrained",   name: "束缚 🔗",       color: "#8b4513", group: "异常",  webmAsset: "buff-fx/static-chains.webm" },
-  { id: "unconscious",  name: "昏迷 💤",       color: "#4b0082", group: "异常",  webmAsset: "buff-fx/float-zzz.webm" },
-  { id: "grappled",     name: "擒抱 🫂",       color: "#d2691e", group: "异常",  webmAsset: "buff-fx/static-people_hugging.webm" },
-  { id: "frightened",   name: "恐慌 😱",       color: "#2f4f4f", group: "异常",  webmAsset: "buff-fx/shake-screaming.webm" },
-  { id: "incapacitated",name: "失能 💔",       color: "#708090", group: "异常",  webmAsset: "buff-fx/static-broken_heart.webm" },
-  { id: "exhaustion",   name: "力竭 🦥",       color: "#ff0000", group: "异常",  webmAsset: "buff-fx/pulse-sloth.webm" },
-  { id: "frozen_stiff", name: "冻僵 🥶",       color: "#00ffff", group: "异常",  webmAsset: "buff-fx/shake-cold_face.webm" },
+  { id: "poisoned",     name: "中毒 🤢",       color: "#008000", group: "异常",  webmAsset: "buff-fx/rain-test_tube.webm" },
+  { id: "haste",        name: "急速术 💨",     color: "#04a3ff", group: "Buffs", webmAsset: "buff-fx/float-wind.webm" },
+  { id: "flying",       name: "飞行术 🕊️",    color: "#d5d5d5", group: "Buffs", webmAsset: "buff-fx/custom-flying.webm",       webmScale: 1.4 },
   { id: "frozen",       name: "冰冻 ❄️",      color: "#0000ff", group: "异常",  webmAsset: "buff-fx/custom-frozen.webm",       webmScale: 1.0 },
   { id: "innate_spell", name: "先天术法 ⚡️",  color: "#08fdfd", group: "Extra", webmAsset: "buff-fx/radial-star.webm" },
-  { id: "prone",        name: "倒地 🦦",       color: "#cd853f", group: "异常",  webmAsset: "buff-fx/static-otter.webm" },
-  { id: "poisoned",     name: "中毒 🤢",       color: "#008000", group: "异常",  webmAsset: "buff-fx/rain-test_tube.webm" },
-  { id: "focused",      name: "专注 🧠",       color: "#4682b4", group: "Extra", webmAsset: "buff-fx/pulse-brain.webm" },
-  { id: "haste",        name: "急速术 💨",     color: "#04a3ff", group: "Buffs", webmAsset: "buff-fx/float-wind.webm" },
-  { id: "flying",       name: "飞行术 🕊️",    color: "#d5d5d5", group: "Buffs", webmAsset: "buff-fx/custom-flying.webm",       webmScale: 1.5 },
   { id: "wild_shape",   name: "野性形态 💥",   color: "#ff0000", group: "Extra", webmAsset: "buff-fx/flash-boom.webm" },
+  { id: "blessing",     name: "祝福术 🧧",     color: "#ffff00", group: "Buffs", webmAsset: "buff-fx/radial-sparkles.webm" },
+  { id: "frightened",   name: "恐慌 😱",       color: "#2f4f4f", group: "异常",  webmAsset: "buff-fx/shake-screaming.webm" },
+  { id: "unconscious",  name: "昏迷 💤",       color: "#4b0082", group: "异常",  webmAsset: "buff-fx/float-zzz.webm" },
+  // 神导术 (guidance) — user undecided; left without a custom asset.
+  { id: "guidance",     name: "神导术 👍",     color: "#ffff00", group: "Buffs", webmAsset: "buff-fx/pulse-thumbs_up.webm" },
+
+  // === Edge-slot persistent emoji (small, divided by compass point) ===
+  // 2026-05-12 — small scale + custom position so multiple stack
+  // without overlap. Each is at a distinct token-edge slot.
+  { id: "hunters_mark", name: "猎人印记 🎯",   color: "#00ff26", group: "Extra", webmAsset: "buff-fx/custom-hunters_mark.webm", webmScale: 1.0 },  // T
+  { id: "focused",      name: "专注 🧠",       color: "#4682b4", group: "Extra", webmAsset: "buff-fx/custom-focused.webm",      webmScale: 1.0 },  // TR
+  { id: "deafened",     name: "耳聋 🎧",       color: "#c0c0c0", group: "异常",  webmAsset: "buff-fx/custom-deafened.webm",     webmScale: 1.0 },  // R
+  { id: "incapacitated",name: "失能 💔",       color: "#708090", group: "异常",  webmAsset: "buff-fx/custom-incapacitated.webm",webmScale: 1.0 },  // BR
+  { id: "prone",        name: "倒地 🦦",       color: "#cd853f", group: "异常",  webmAsset: "buff-fx/custom-prone.webm",        webmScale: 1.0 },  // B
+  { id: "slowed",       name: "缓慢术 ⌛",     color: "#e805f4", group: "异常",  webmAsset: "buff-fx/custom-slowed.webm",       webmScale: 1.0 },  // BL
+  { id: "blinded",      name: "目盲 🕶️",      color: "#4a4a4a", group: "异常",  webmAsset: "buff-fx/custom-blinded.webm",      webmScale: 1.0 },  // L
+  { id: "exhaustion",   name: "力竭 🦥",       color: "#ff0000", group: "异常",  webmAsset: "buff-fx/custom-exhaustion.webm",   webmScale: 1.0 },  // TL
+
+  // === Centre / character-wide persistent emoji (smaller than before) ===
+  { id: "dead",         name: "死亡 💀",       color: "#000000", group: "Extra", webmAsset: "buff-fx/custom-dead.webm",         webmScale: 1.0 },
+  { id: "petrified",    name: "石化 🗿",       color: "#8b7d6b", group: "异常",  webmAsset: "buff-fx/custom-petrified.webm",    webmScale: 1.0 },
+  { id: "restrained",   name: "束缚 🔗",       color: "#8b4513", group: "异常",  webmAsset: "buff-fx/custom-restrained.webm",   webmScale: 1.0 },
+  { id: "grappled",     name: "擒抱 🫂",       color: "#d2691e", group: "异常",  webmAsset: "buff-fx/custom-grappled.webm",     webmScale: 1.0 },
+  { id: "raging",       name: "狂暴 😠",       color: "#f20808", group: "Extra", webmAsset: "buff-fx/custom-raging.webm",       webmScale: 1.0 },
+  { id: "frozen_stiff", name: "冻僵 🥶",       color: "#00ffff", group: "异常",  webmAsset: "buff-fx/custom-frozen_stiff.webm", webmScale: 1.0 },
 ];

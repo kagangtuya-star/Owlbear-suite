@@ -128,6 +128,8 @@ EMOJI_CODEPOINTS: dict[str, str] = {
     "down_arrow":      "2b07",          # ⬇ — disadvantage alt
     "bow":             "1f3f9",         # 🏹 — hunter's mark alt
     "rainbow":         "1f308",         # 🌈 — guidance / blessing alt
+    "up_arrow":        "2b06",          # ⬆ — advantage
+    "up_triangle":     "1f53c",         # 🔼 — advantage alt
 }
 
 
@@ -409,6 +411,62 @@ def render_place(args: argparse.Namespace) -> List[Image.Image]:
     return frames
 
 
+def render_launch(args: argparse.Namespace) -> List[Image.Image]:
+    """Particles SPAWN AT CENTRE and travel outward at `angle` for a
+    short distance (`reach × max(W,H)`), then fade. Distinct from
+    `drift` which traverses the full canvas — `launch` is "emit from
+    token centre toward upper-right corner" style motion (诗人激励).
+
+    Seamless via integer cycles per loop.
+    """
+    W, H = args.width, args.height
+    total_frames = int(args.fps * args.duration)
+    rng = random.Random(args.seed)
+    emoji_img = fetch_emoji(args.emoji)
+
+    cx, cy = W / 2, H / 2
+    # 0° = up (negative Y). 90° = right. 180° = down. CW positive.
+    math_angle = (args.angle - 90) * math.pi / 180
+    dx = math.cos(math_angle)
+    dy = math.sin(math_angle)
+    reach = max(W, H) * args.reach
+
+    # Per-particle angular jitter so the stream isn't a perfect line.
+    particles = []
+    for _ in range(args.count):
+        jitter_deg = rng.uniform(-args.angle_jitter, args.angle_jitter)
+        jma = math_angle + jitter_deg * math.pi / 180
+        cycles = rng.randint(args.cycles_min, args.cycles_max)
+        particles.append({
+            "dx": math.cos(jma),
+            "dy": math.sin(jma),
+            "cycles": cycles,
+            "phase": rng.uniform(0, 1),
+            "scale": rng.uniform(args.scale_min, args.scale_max),
+            "rot_base": rng.uniform(-10, 10),
+        })
+    _ = dx, dy  # silence linter on the base angle (jittered per-particle)
+
+    frames: List[Image.Image] = []
+    for f in range(total_frames):
+        u = f / total_frames
+        frame = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+        for p in particles:
+            prog = (u * p["cycles"] + p["phase"]) % 1.0
+            x = cx + p["dx"] * reach * prog
+            y = cy + p["dy"] * reach * prog
+            # Fade-in over first 12%, hold to 80%, fade-out the rest.
+            if prog < 0.12:
+                op = prog / 0.12
+            elif prog > 0.80:
+                op = max(0.0, (1.0 - prog) / 0.20)
+            else:
+                op = 1.0
+            paste_emoji(frame, emoji_img, x, y, p["scale"], p["rot_base"], op, tint=args.tint)
+        frames.append(frame)
+    return frames
+
+
 def render_drift(args: argparse.Namespace) -> List[Image.Image]:
     """Particles travel in a straight line at angle θ (degrees,
     clockwise from north = upward). Generalisation of `rain` (θ=180,
@@ -449,14 +507,23 @@ def render_drift(args: argparse.Namespace) -> List[Image.Image]:
     for _ in range(args.count):
         offset = rng.uniform(-spread / 2, spread / 2)
         cycles = rng.randint(args.cycles_min, args.cycles_max)
+        # 2026-05-15 — `--no-rotation` flag forces fixed orientation.
+        # Useful for arrows / icons that look weird if they tumble
+        # (e.g. ⬇ disadvantage, ⬆ advantage).
+        if args.no_rotation:
+            rot_base = 0
+            rot_per_cycle = 0
+        else:
+            rot_base = rng.uniform(0, 360)
+            rot_per_cycle = rng.choice([-1, 0, 0, 1]) * 90
         particles.append({
             "px": spawn_cx + perp_x * offset,
             "py": spawn_cy + perp_y * offset,
             "cycles": cycles,
             "phase":  rng.uniform(0, 1),
             "scale":  rng.uniform(args.scale_min, args.scale_max),
-            "rot_base": rng.uniform(0, 360),
-            "rot_per_cycle": rng.choice([-1, 0, 0, 1]) * 90,  # quarter spin
+            "rot_base": rot_base,
+            "rot_per_cycle": rot_per_cycle,
         })
 
     frames: List[Image.Image] = []
@@ -1037,6 +1104,22 @@ EFFECTS: dict[str, dict] = {
             "scale_max":  0.22,
             "spread":     0.5,          # fraction of max(W,H), perp to drift
             "tint":       "",
+            "no_rotation": False,
+        },
+    },
+    "launch": {
+        "renderer": render_launch,
+        "defaults": {
+            "emoji":         "musical_note",
+            "count":         4,
+            "angle":         45,        # 0=up, 90=right (out-and-up = 45)
+            "cycles_min":    1,
+            "cycles_max":    2,
+            "scale_min":     0.16,
+            "scale_max":     0.26,
+            "reach":         0.65,      # frac of max(W,H)
+            "angle_jitter":  12,        # degrees of per-particle spread
+            "tint":          "",
         },
     },
 }
@@ -1188,6 +1271,21 @@ def build_parser() -> argparse.ArgumentParser:
     p_drift.add_argument("--scale-max",  dest="scale_max",  type=float)
     p_drift.add_argument("--spread",     type=float, help="perpendicular spread 0..1 (frac of max(W,H))")
     p_drift.add_argument("--tint",       type=str, help="colour multiply hex")
+    p_drift.add_argument("--no-rotation", dest="no_rotation", action="store_true",
+                         help="lock particle orientation (useful for arrow / icon drifts)")
+
+    p_launch = sub.add_parser("launch", help="Particles emit from centre outward (诗人激励 to upper-right)")
+    add_common_args(p_launch)
+    p_launch.add_argument("--count",        type=int)
+    p_launch.add_argument("--angle",        type=float, help="emission direction (0=up, 90=right)")
+    p_launch.add_argument("--cycles-min",   dest="cycles_min",   type=int)
+    p_launch.add_argument("--cycles-max",   dest="cycles_max",   type=int)
+    p_launch.add_argument("--scale-min",    dest="scale_min",    type=float)
+    p_launch.add_argument("--scale-max",    dest="scale_max",    type=float)
+    p_launch.add_argument("--reach",        type=float, help="travel distance, fraction of max(W,H)")
+    p_launch.add_argument("--angle-jitter", dest="angle_jitter", type=float,
+                          help="±degrees of per-particle direction spread (0=perfect line)")
+    p_launch.add_argument("--tint",         type=str)
 
     # `compose` is a multi-layer mode — takes a JSON spec via --layers
     # and renders each layer onto the same canvas. Used for buffs that
