@@ -117,6 +117,7 @@ export default defineConfig(({ command }) => ({
         "circleimage": resolve(__dirname, "circleimage.html"),
         "resource-edit": resolve(__dirname, "resource-edit.html"),
         "resource-toast": resolve(__dirname, "resource-toast.html"),
+        "supporter-overlay": resolve(__dirname, "supporter-overlay.html"),
         "dm-announcement": resolve(__dirname, "dm-announcement.html"),
         "drag-preview": resolve(__dirname, "drag-preview.html"),
         "layout-editor": resolve(__dirname, "layout-editor.html"),

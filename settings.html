@@ -295,6 +295,29 @@ body{display:flex;flex-direction:column;border:1px solid var(--border-strong);bo
 .contact-box{background:var(--bg-card);border:1px solid var(--border);border-radius:6px;padding:10px 14px;margin-top:10px;font-size:12px}
 .contact-box code{font-family:ui-monospace,Consolas,monospace;color:var(--accent)}
 
+/* 2026-05-12 — "tell me your portrait" CTA block replacing the old
+   inline backer wall (which now drifts around the screen behind
+   this panel via the supporter-overlay modal). */
+.thanks-call-to-action{
+  background:linear-gradient(135deg, rgba(255,140,58,0.12), rgba(216,196,104,0.08));
+  border:1px solid rgba(255,214,107,0.30);
+  border-radius:8px;
+  padding:12px 16px;
+  margin-top:10px;
+  font-size:12.5px;
+  line-height:1.55;
+}
+.thanks-call-to-action p{margin:0}
+.thanks-call-to-action p + p{margin-top:4px}
+.thanks-call-to-action b{color:#ffd66b}
+.thanks-call-to-action code{
+  font-family:ui-monospace,Consolas,monospace;
+  color:var(--accent);
+  font-size:12px;
+}
+.thanks-call-to-action a{color:inherit; text-decoration:underline}
+.thanks-call-to-action a:hover{color:#ffd66b}
+
 /* Backer-credit list (Support tab → 鸣谢 / Thanks block).
    Each name has a rainbow text-shadow that cycles through six hues
    over a 6-second loop. text-shadow is rendered directly underneath

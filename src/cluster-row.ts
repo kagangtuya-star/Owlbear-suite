@@ -27,6 +27,15 @@ import { IS_MOBILE } from "./feature-flags";
 const SETTINGS_POPOVER_ID = "com.obr-suite/settings";
 const SETTINGS_URL = assetUrl("settings.html");
 
+// 2026-05-12 — supporter overlay modal opened ALONGSIDE the settings
+// popover (kept invisible by default; the settings iframe broadcasts
+// SHOW when the user enters the "support" tab). Opened first so the
+// popover renders ABOVE it; `disablePointerEvents: true` makes the
+// modal clickthrough so the supporter names don't block the canvas
+// underneath.
+const SUPPORTER_OVERLAY_MODAL_ID = "com.obr-suite/supporter-overlay";
+const SUPPORTER_OVERLAY_URL = assetUrl("supporter-overlay.html");
+
 // Broadcast IDs
 const BC_TIMESTOP_TOGGLE = "com.obr-suite/timestop-toggle";
 const BC_FOCUS_TRIGGER = "com.obr-suite/focus-trigger";
@@ -329,6 +338,26 @@ async function onGear() {
       OBR.viewport.getWidth(),
       OBR.viewport.getHeight(),
     ]);
+    // 1) Open the supporter-overlay fullscreen modal FIRST so the
+    //    settings popover renders ABOVE it. The overlay starts
+    //    invisible (CSS) and fades names in only when the user
+    //    selects the "support" tab (settings.ts broadcasts).
+    //    disablePointerEvents lets the canvas underneath stay
+    //    interactive — the names + black backdrop are decorative.
+    try {
+      await OBR.modal.open({
+        id: SUPPORTER_OVERLAY_MODAL_ID,
+        url: SUPPORTER_OVERLAY_URL,
+        fullScreen: true,
+        hidePaper: true,
+        hideBackdrop: true,
+        disablePointerEvents: true,
+      });
+    } catch (e) {
+      // Non-fatal — settings still opens without the overlay.
+      console.warn("[obr-suite/cluster-row] supporter overlay open failed", e);
+    }
+    // 2) Settings popover on top.
     await OBR.popover.open({
       id: SETTINGS_POPOVER_ID,
       url: SETTINGS_URL,
@@ -345,8 +374,39 @@ async function onGear() {
   }
 }
 
+// 2026-05-12 — when the settings popover closes (user click-away or
+// pressing Esc), close the supporter overlay too. The settings iframe
+// fires a final HIDE broadcast on pagehide which fades names; the
+// listener below tears down the modal a moment later so it doesn't
+// linger. State held at module scope; listener installed inside
+// OBR.onReady (see installSupporterOverlayCloseListener()).
+let _overlayCloseTimer: number | null = null;
+function installSupporterOverlayCloseListener(): void {
+  try {
+    OBR.broadcast.onMessage("com.obr-suite/supporter-overlay/visibility", (event) => {
+      const data = event.data as { visible?: boolean } | undefined;
+      if (!data) return;
+      if (data.visible) {
+        if (_overlayCloseTimer !== null) {
+          window.clearTimeout(_overlayCloseTimer);
+          _overlayCloseTimer = null;
+        }
+      } else {
+        if (_overlayCloseTimer !== null) window.clearTimeout(_overlayCloseTimer);
+        _overlayCloseTimer = window.setTimeout(() => {
+          _overlayCloseTimer = null;
+          OBR.modal.close(SUPPORTER_OVERLAY_MODAL_ID).catch(() => {});
+        }, 800);
+      }
+    });
+  } catch (e) {
+    console.warn("[obr-suite/cluster-row] supporter overlay listener install failed", e);
+  }
+}
+
 OBR.onReady(async () => {
   installDebugOverlay();
+  installSupporterOverlayCloseListener();
   OBR.broadcast.onMessage("com.obr-suite/timestop-state", (event) => {
     timeStopActive = !!(event.data as any)?.active;
     renderRow();

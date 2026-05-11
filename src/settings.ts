@@ -250,7 +250,12 @@ const SUPPORT: BilingualHtml = {
       </span>
     </div>
     <p style="font-size:11px;color:#9aa0b3;margin-top:-2px">微信 / 支付宝扫码也可以，备注里留个昵称就能上鸣谢墙。</p>
-    ${supportersHtml("zh")}
+    <h3>${ICONS.heart} 鸣谢</h3>
+    <div class="thanks-call-to-action">
+      <p><b>支持过我的朋友们 ❤</b> 你们的名字正在窗外飘动 —— 想让自己的<b>头像 / 角色立绘 / 方头立绘</b>挂在名字前面吗？请把图片发到我邮箱：</p>
+      <p style="margin-top:6px"><a href="mailto:${EMAIL}"><code>${EMAIL}</code></a></p>
+      <p style="font-size:11px;color:#9aa0b3;margin-top:6px">下周我会统一收集并合入名字前。无所谓尺寸，PNG / JPG / SVG 都可以，建议透明背景方形或竖向立绘。</p>
+    </div>
     <h3>${ICONS.mail} 反馈</h3>
     <div class="contact-box">
       <p>遇到 bug、想加新功能、想交流插件开发，欢迎邮件联系：</p>
@@ -270,8 +275,13 @@ const SUPPORT: BilingualHtml = {
         <img class="qr-thumb" src="${assetUrl("zfb.jpg")}" alt="Alipay" loading="lazy">
       </span>
     </div>
-    <p style="font-size:11px;color:#9aa0b3;margin-top:-2px">WeChat / Alipay also works for CN supporters — leave a nickname in the tip note to get listed in the wall below.</p>
-    ${supportersHtml("en")}
+    <p style="font-size:11px;color:#9aa0b3;margin-top:-2px">WeChat / Alipay also works for CN supporters — leave a nickname in the tip note to get listed in the wall behind this panel.</p>
+    <h3>${ICONS.heart} Thanks</h3>
+    <div class="thanks-call-to-action">
+      <p><b>Everyone who chipped in ❤</b> your names are drifting around behind this panel. Want your <b>avatar / character portrait / square headshot</b> shown beside your name? Email me a picture:</p>
+      <p style="margin-top:6px"><a href="mailto:${EMAIL}"><code>${EMAIL}</code></a></p>
+      <p style="font-size:11px;color:#9aa0b3;margin-top:6px">I'll batch them in next week. Any size, PNG / JPG / SVG works — square transparent backgrounds or vertical portraits look best.</p>
+    </div>
     <h3>${ICONS.mail} Feedback</h3>
     <div class="contact-box">
       <p>Found a bug, want a feature, or want to chat about plugin dev — please reach out:</p>
@@ -2859,6 +2869,23 @@ function moduleLabelKey(id: ModuleId): string {
   }
 }
 
+// 2026-05-12 — supporter overlay coordination. When the user is on
+// the "support" tab, an offscreen fullscreen modal (opened by
+// cluster-row.ts when settings popover opens) shows floating
+// supporter names around this popover. Settings broadcasts
+// SHOW / HIDE so the overlay iframe toggles its visibility.
+const BC_SUPPORTER_OVERLAY_VISIBILITY = "com.obr-suite/supporter-overlay/visibility";
+
+function broadcastOverlayVisibility(visible: boolean): void {
+  try {
+    OBR.broadcast.sendMessage(
+      BC_SUPPORTER_OVERLAY_VISIBILITY,
+      { visible, lang },
+      { destination: "LOCAL" },
+    );
+  } catch {}
+}
+
 function renderTabs() {
   tabsEl.innerHTML = VISIBLE_TABS.map((tab) => {
     const text = lang === "zh" ? tab.zh : tab.en;
@@ -2871,6 +2898,7 @@ function renderTabs() {
       activeTab = btn.dataset.tab!;
       renderTabs();
       renderContent();
+      broadcastOverlayVisibility(activeTab === "support");
     });
   });
 }
@@ -2972,4 +3000,15 @@ OBR.onReady(async () => {
   onStateChange(() => renderContent());
   onLangChange((l) => setLang(l));
   setLang(getLocalLang());
+
+  // 2026-05-12 — sync supporter overlay with initial tab + close on unload.
+  // The overlay modal is opened by cluster-row.ts when the settings popover
+  // is opened; this iframe just tells it WHEN to fade names in/out based
+  // on the user's tab selection. On pagehide (popover closing), broadcast
+  // a final HIDE so the overlay fades out cleanly before cluster-row.ts
+  // closes the modal entirely.
+  broadcastOverlayVisibility(activeTab === "support");
+  const handleUnload = () => broadcastOverlayVisibility(false);
+  window.addEventListener("pagehide", handleUnload);
+  window.addEventListener("beforeunload", handleUnload);
 });
