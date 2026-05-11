@@ -1,3 +1,5 @@
 node_modules
 dist
 *.local
+tools/buff-fx-gen/__pycache__/
+tools/buff-fx-gen/.emoji-cache/
