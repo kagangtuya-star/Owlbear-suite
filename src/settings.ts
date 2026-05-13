@@ -257,7 +257,7 @@ const SUPPORT: BilingualHtml = {
       <p>感谢大家的支持和陪伴，虽然作为免费分享的插件，主要是用来满足我自己的需求的同时，完美主义和对"这个功能明明可以做的更好"的不甘在驱使我前进——但每次看到各位的无偿捐赠都会让我觉得：<b>我做的事情是有意义的，大家和我是一样困扰的，没有人应该因为将就能用勉强能用就屈服于不方便的功能，而大家和我是共鸣的。</b></p>
       <p>你们的名字正在窗外飘动 —— 想让自己的<b>头像 / 角色立绘 / 方头立绘</b>挂在名字前面吗？请把图片发到我邮箱：</p>
       <p style="margin-top:6px"><a href="mailto:${EMAIL}"><code>${EMAIL}</code></a></p>
-      <p style="font-size:11px;color:#9aa0b3;margin-top:6px">下周我会统一收集并合入名字前。无所谓尺寸，PNG / JPG / SVG 都可以，请使用透明背景方形或圆形立绘。</p>
+      <p style="font-size:11px;color:#9aa0b3;margin-top:6px">下周我会统一收集并合入名字前。无所谓尺寸，PNG / JPG / SVG 都可以，请使用透明背景方形或圆形立绘。如果可以请尽可能避免AI创作。</p>
     </div>
     <h3>${ICONS.mail} 反馈</h3>
     <div class="contact-box">

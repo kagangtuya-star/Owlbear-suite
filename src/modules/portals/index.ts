@@ -135,6 +135,17 @@ let blinkModalOpen = false;
 // Payload latched at destination-pick time. The blink modal asks for
 // it via BROADCAST_BLINK_PROCEED at the apex of the close animation.
 let pendingTeleport: { destPortalId: string; tokenIds: string[] } | null = null;
+// 2026-05-12 — second job kind: "blink + focus camera ONLY" (no token
+// move). Used by the initiative tracker's "集结角色到此处" feature so
+// every client gets the same blink + viewport snap that a portal
+// teleport gives. Mutually exclusive with `pendingTeleport`; the
+// proceed handler picks whichever is set.
+let pendingFocus: { x: number; y: number } | null = null;
+// Cross-client broadcast for "open blink modal + focus camera at (x, y)".
+// Receivers honour their OWN local blink-enabled setting — if a player
+// has blink off, they skip the modal but still get the camera focus.
+const BROADCAST_BLINK_AND_FOCUS = `${PLUGIN_ID}/blink-and-focus`;
+export const PORTALS_BC_BLINK_AND_FOCUS = BROADCAST_BLINK_AND_FOCUS;
 
 // --- DM auto-edit-popover when single portal selected ---
 let editPopoverOpen = false;
@@ -693,6 +704,51 @@ async function closeBlinkModal() {
   blinkModalOpen = false;
 }
 
+// 2026-05-12 — generic "blink + focus camera at this point" entry,
+// re-used by the initiative tracker's gather-here feature (broadcast
+// to every client so all players see the same cinematic when the DM
+// rallies the party).
+//
+// Honors LS_BLINK_KEY: blink-disabled clients skip the modal and
+// just smooth-pan the camera. Blink-enabled clients get the full
+// eyelid animation with an instant camera snap at the apex.
+async function openBlinkAndFocus(center: { x: number; y: number }): Promise<void> {
+  const blinkEnabled = readBlinkEnabled();
+  if (!blinkEnabled) {
+    // Smooth pan — no modal. Same math as teleport()'s camera move.
+    try {
+      const [vw, vh, vpScale] = await Promise.all([
+        OBR.viewport.getWidth(),
+        OBR.viewport.getHeight(),
+        OBR.viewport.getScale(),
+      ]);
+      const target = {
+        x: -center.x * vpScale + vw / 2,
+        y: -center.y * vpScale + vh / 2,
+      };
+      OBR.viewport.animateTo({ position: target, scale: vpScale }).catch(() => {});
+    } catch {}
+    return;
+  }
+  if (blinkModalOpen) return;          // a teleport blink is already in flight
+  pendingFocus = { x: center.x, y: center.y };
+  blinkModalOpen = true;
+  try {
+    await OBR.modal.open({
+      id: BLINK_MODAL_ID,
+      url: BLINK_URL,
+      fullScreen: true,
+      hideBackdrop: true,
+      hidePaper: true,
+      disablePointerEvents: false,
+    });
+  } catch (e) {
+    console.error("[obr-suite/portals] openBlinkAndFocus open modal failed", e);
+    blinkModalOpen = false;
+    pendingFocus = null;
+  }
+}
+
 // --- Teleport: gather tokens around destination portal --------------------
 
 // Snapshotted token-side extension metadata so the post-teleport
@@ -1249,9 +1305,11 @@ export async function setupPortals(): Promise<void> {
 
   unsubs.push(
     OBR.broadcast.onMessage(BROADCAST_BLINK_PROCEED, async () => {
-      const job = pendingTeleport;
+      const tJob = pendingTeleport;
+      const fJob = pendingFocus;
       pendingTeleport = null;
-      if (!job) {
+      pendingFocus = null;
+      if (!tJob && !fJob) {
         // Modal asked to proceed but we've already cleared the job
         // (e.g. modal opened twice somehow). Tell it to recover.
         blinkModalOpen = false;
@@ -1260,24 +1318,57 @@ export async function setupPortals(): Promise<void> {
         } catch {}
         return;
       }
-      await teleport(job.destPortalId, job.tokenIds, true);
-      // The teleport's own updateItems calls fire scene.items.onChange
-      // → onItemsMaybeDragging → seeds movedByMeIds with the teleported
-      // IDs (because lastModifiedUserId is this client). If we don't
-      // strip them now, the next genuine user drag hits onDragEnd
-      // with movedNow = {teleported tokens, plus newly-dragged token}
-      // — and any teleported token still sitting on its destination
-      // portal will re-trigger the popover with the wrong tokenIds.
-      for (const id of job.tokenIds) movedByMeIds.delete(id);
-      // Release the gate as soon as the teleport finishes — the
-      // remaining eye-open animation is purely visual (~500ms) and
-      // shouldn't silently swallow the user's next drag. Without
-      // this, dragging during the open animation is dropped and the
-      // user has to drag a second time to make anything happen.
+      if (tJob) {
+        await teleport(tJob.destPortalId, tJob.tokenIds, true);
+        // The teleport's own updateItems calls fire scene.items.onChange
+        // → onItemsMaybeDragging → seeds movedByMeIds with the teleported
+        // IDs (because lastModifiedUserId is this client). If we don't
+        // strip them now, the next genuine user drag hits onDragEnd
+        // with movedNow = {teleported tokens, plus newly-dragged token}
+        // — and any teleported token still sitting on its destination
+        // portal will re-trigger the popover with the wrong tokenIds.
+        for (const id of tJob.tokenIds) movedByMeIds.delete(id);
+      } else if (fJob) {
+        // Camera-only focus (used by initiative gather). No token
+        // movement on this client — the originating GM already
+        // updated positions; OBR scene-sync brings them here.
+        try {
+          const [vw, vh, vpScale] = await Promise.all([
+            OBR.viewport.getWidth(),
+            OBR.viewport.getHeight(),
+            OBR.viewport.getScale(),
+          ]);
+          const target = {
+            x: -fJob.x * vpScale + vw / 2,
+            y: -fJob.y * vpScale + vh / 2,
+          };
+          await OBR.viewport.setPosition(target).catch(() => {});
+        } catch {}
+      }
+      // Release the gate as soon as the work finishes — the remaining
+      // eye-open animation (~500 ms) is purely visual and shouldn't
+      // swallow the user's next drag.
       blinkModalOpen = false;
       try {
         await OBR.broadcast.sendMessage(BROADCAST_BLINK_DONE, {}, { destination: "LOCAL" });
       } catch {}
+    })
+  );
+
+  // 2026-05-12 — cross-client "blink + focus" trigger (initiative
+  // gather etc.). Each client honours its own LS_BLINK_KEY: blink on
+  // → modal + instant camera snap; blink off → smooth animateTo.
+  unsubs.push(
+    OBR.broadcast.onMessage(BROADCAST_BLINK_AND_FOCUS, async (msg) => {
+      const data = msg.data as { x?: number; y?: number } | undefined;
+      if (
+        !data ||
+        typeof data.x !== "number" ||
+        typeof data.y !== "number" ||
+        !Number.isFinite(data.x) ||
+        !Number.isFinite(data.y)
+      ) return;
+      await openBlinkAndFocus({ x: data.x, y: data.y });
     })
   );
 

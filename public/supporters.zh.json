@@ -25,7 +25,7 @@
   { "name": "PB27", "amount": 50 },
   { "name": "蚀星ErosionStar", "amount": 90 },
   { "name": "消炎药", "amount": 20 },
-  { "name": "SiriusTGT", "amount": 25 },
+  { "name": "SiriusTGT", "amount": 50 },
   { "name": "悠悠向青山", "amount": 20 },
   { "name": "小舟", "amount": 10 },
   { "name": "孤月映寒", "amount": 10 },
@@ -80,5 +80,8 @@
   { "name": "PAN", "amount":30 },
   { "name": "喜欢梦游爱睡觉", "amount":5 },
   { "name": "卢比安", "amount":20 },
-  { "name": "凸守早苗", "amount":100 }
+  { "name": "凸守早苗", "amount":100 },
+  { "name": "申必人", "amount":20 },
+  { "name": "潜行者小黑", "amount":50 },
+  { "name": "初心", "amount":100 }
 ]

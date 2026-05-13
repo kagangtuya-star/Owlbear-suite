@@ -205,17 +205,17 @@ function pickSupporter(): Supporter | null {
       .map((slot) => slot.current!.name),
   );
   const pool = supporters.filter((s) => !activeNames.has(s.name));
-  const candidates = pool.length > 0 ? pool : supporters;
+  if (pool.length === 0) return null;
 
   let total = 0;
-  for (const s of candidates) total += 1 + Math.sqrt(s.amount);
+  for (const s of pool) total += 1 + Math.sqrt(s.amount);
   let pick = Math.random() * total;
-  for (const s of candidates) {
+  for (const s of pool) {
     const w = 1 + Math.sqrt(s.amount);
     if (pick < w) return s;
     pick -= w;
   }
-  return candidates[candidates.length - 1];
+  return pool[pool.length - 1];
 }
 
 function placeSlot(slot: Slot, s: Supporter): void {

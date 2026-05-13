@@ -348,7 +348,30 @@ async function registerContextMenus(lang: Lang) {
           if (positions[idx]) d.position = positions[idx];
         });
       });
-      // Notification removed per user feedback — silent gather.
+      // 2026-05-12 — broadcast "blink + focus" to every client so all
+      // players get the same cinematic the DM does. The portals
+      // module owns the modal + camera math (it already uses the
+      // exact recipe for portal teleports); we just tell it WHERE.
+      // Each client honours its own LS_BLINK_KEY (portal blink
+      // toggle in the portals settings tab) — blink off skips the
+      // modal but still smooth-pans the camera.
+      try {
+        const payload = { x: center.x, y: center.y };
+        await Promise.all([
+          OBR.broadcast.sendMessage(
+            "com.obr-suite/portals/blink-and-focus",
+            payload,
+            { destination: "LOCAL" },
+          ),
+          OBR.broadcast.sendMessage(
+            "com.obr-suite/portals/blink-and-focus",
+            payload,
+            { destination: "REMOTE" },
+          ),
+        ]);
+      } catch (e) {
+        console.warn("[obr-suite/initiative] gather broadcast failed", e);
+      }
     },
   });
 
