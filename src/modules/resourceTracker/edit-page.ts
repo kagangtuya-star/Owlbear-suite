@@ -145,6 +145,18 @@ function applyPayload(p: HashPayload): void {
   el.addEventListener("input", updatePreview);
 });
 
+// 2026-05-12 — user request #15: clicking "当前 / 最大" should select
+// all the current text so you can type a new number directly. Same
+// behaviour as the OBR HP-bar number editor.
+[inpCurrent, inpMax].forEach((el) => {
+  el.addEventListener("focus", () => {
+    // requestAnimationFrame so the focus-set / blur-restore cycles
+    // settle before the selection paints — without this, Chrome
+    // sometimes deselects right after focus.
+    requestAnimationFrame(() => el.select());
+  });
+});
+
 btnX.addEventListener("click", () => { void close(); });
 btnCancel.addEventListener("click", () => { void close(); });
 

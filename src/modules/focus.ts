@@ -20,7 +20,35 @@ const ICON_URL = assetUrl("focus-icon.svg");
 let unsubBroadcast: (() => void) | null = null;
 let unsubTriggerBroadcast: (() => void) | null = null;
 
+// 2026-05-12 — same as timeStop.ts. Bare deselect doesn't kill an
+// active drag; lock-then-unlock interrupts OBR's drag handler. See
+// the comment in timeStop.ts for the full reasoning.
+async function interruptInFlightDrag(): Promise<void> {
+  try {
+    const sel = await OBR.player.getSelection();
+    if (!sel || sel.length === 0) return;
+    const ids = [...sel];
+    try {
+      await OBR.scene.items.updateItems(ids, (drafts) => {
+        for (const d of drafts) d.locked = true;
+      });
+    } catch {}
+    try { await OBR.player.deselect(); } catch {}
+    setTimeout(() => {
+      OBR.scene.items.updateItems(ids, (drafts) => {
+        for (const d of drafts) d.locked = false;
+      }).catch(() => {});
+    }, 250);
+  } catch {}
+}
+
 async function focusCamera(x: number, y: number, scale: number) {
+  // 2026-05-12 — kill any in-flight drag BEFORE the camera moves.
+  // Without this, a player who was mid-drag when focus fires has
+  // their token "fly" along with the camera pan (the drag's screen-
+  // delta accumulates against the new world position).
+  await interruptInFlightDrag();
+
   const [w, h] = await Promise.all([
     OBR.viewport.getWidth(),
     OBR.viewport.getHeight(),
@@ -29,9 +57,6 @@ async function focusCamera(x: number, y: number, scale: number) {
     position: { x: -x * scale + w / 2, y: -y * scale + h / 2 },
     scale,
   });
-  // "登" — gentle confirmation thunk. Fires on every client receiving
-  // a focus broadcast, so everyone hears it together as their cameras
-  // move.
   try {
     const { sfxSyncView } = await import("./dice/sfx-broadcast");
     sfxSyncView();

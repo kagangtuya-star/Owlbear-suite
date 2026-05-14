@@ -993,6 +993,27 @@ async function teleport(
     console.warn("[obr-suite/portals] hide attachments failed", e);
   }
 
+  // 2026-05-12 — Phase 1.75: also hide the TOKENS themselves during
+  // the position write. Symmetric with Phase 1.5's attachment hide.
+  // User request: "需要眼皮闭上时再进行隐藏且移动再显形" — during
+  // eyes-closed window, fully hide the token, move it, then reveal.
+  // This is the most robust way to bypass light-source / wall plugins
+  // that check the token's own collision with map geometry: an
+  // invisible token doesn't trigger those checks. The whole sequence
+  // runs WHILE THE BLINK OVERLAY IS UP so players never see the flash.
+  const tokenVisibleSnap = new Map<string, boolean>();
+  try {
+    const toks = await OBR.scene.items.getItems(tokenIds);
+    for (const t of toks) tokenVisibleSnap.set(t.id, t.visible);
+    if (toks.length > 0) {
+      await OBR.scene.items.updateItems(tokenIds, (drafts) => {
+        for (const d of drafts) d.visible = false;
+      });
+    }
+  } catch (e) {
+    console.warn("[obr-suite/portals] hide tokens before move failed", e);
+  }
+
   // Phase 2 — actual position update.
   try {
     await OBR.scene.items.updateItems(tokenIds, (drafts) => {
@@ -1002,6 +1023,22 @@ async function teleport(
     });
   } catch (e) {
     console.error("[obr-suite/portals] teleport updateItems failed", e);
+  }
+
+  // Phase 2.25 — restore token visibility verbatim. Runs BEFORE the
+  // attachment-restore so eye-open lands on a token that's already
+  // back to its original visible state.
+  if (tokenVisibleSnap.size > 0) {
+    try {
+      await OBR.scene.items.updateItems(tokenIds, (drafts) => {
+        for (const d of drafts) {
+          const v = tokenVisibleSnap.get(d.id);
+          if (typeof v === "boolean") d.visible = v;
+        }
+      });
+    } catch (e) {
+      console.warn("[obr-suite/portals] restore token visibility failed", e);
+    }
   }
 
   // Phase 2.5 — restore attachments' visible state. Symmetric with

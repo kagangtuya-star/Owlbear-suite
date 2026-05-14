@@ -231,6 +231,14 @@ export function mountResourcePanel(opts: MountOptions): {
       const ob = b.order ?? Number.MAX_SAFE_INTEGER;
       return oa - ob;
     });
+    // 2026-05-12 — user bug #17: when the user changes a resource's
+    // TYPE via the edit modal (count → bar → number), the row id
+    // stays the same but the DOM markup for the old type doesn't
+    // match the new type's expected nodes — patchRow's `if r.type
+    // === "count"` branch updates pills that no longer represent
+    // the canonical state because the row is now supposed to be a
+    // bar. Detect type change here and FULL-replace the row's HTML
+    // instead of trying to patch.
     for (const r of sorted) {
       let row = list.querySelector<HTMLElement>(`.rt-row[data-id="${cssEscape(r.id)}"]`);
       if (!row) {
@@ -239,6 +247,17 @@ export function mountResourcePanel(opts: MountOptions): {
         row = tmp.firstElementChild as HTMLElement;
         list.appendChild(row);
         bindRowEvents(row);
+        continue;
+      }
+      // Detect type change vs the row's CURRENT DOM (which still
+      // reflects the previous render).
+      const prev = prevById.get(r.id);
+      if (prev && prev.type !== r.type) {
+        const tmp = document.createElement("div");
+        tmp.innerHTML = renderResourceRow(r);
+        const fresh = tmp.firstElementChild as HTMLElement;
+        row.replaceWith(fresh);
+        bindRowEvents(fresh);
       }
     }
 

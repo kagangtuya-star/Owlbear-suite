@@ -98,19 +98,30 @@ async function bindMonsterToTokens(mon: ParsedMonster, itemIds: string[]): Promi
           typeof (d.metadata as any)[CC_BIND_KEY] === "string"
           && !!(d.metadata as any)[CC_BIND_KEY];
         d.metadata[BESTIARY_SLUG_KEY] = slug;
-        d.metadata[BUBBLES_META] = {
-          health: mon.hp,
-          "max health": mon.hp,
-          "temporary health": 0,
-          "armor class": mon.ac,
-          hide: false,
-          locked: true,
-        };
-        d.metadata[BUBBLES_NAME] = mon.name;
+        // 2026-05-12 — user request #13: when binding a bestiary
+        // monster to a token that ALREADY HAS A CHARACTER CARD
+        // BINDING, leave the bubbles/HP/AC alone. The character
+        // card is the source of truth for that token's stats; the
+        // bestiary entry is just a reference (e.g. "this PC is a
+        // wereraven — show me the wereraven monster stats" for the
+        // DM). Overwriting HP/AC/name would clobber the player
+        // character.
+        //
+        // For non-CC-bound tokens (plain monster tokens), bestiary
+        // binding still writes stats + name as before.
         if (!hasCcBinding) {
+          d.metadata[BUBBLES_META] = {
+            health: mon.hp,
+            "max health": mon.hp,
+            "temporary health": 0,
+            "armor class": mon.ac,
+            hide: false,
+            locked: true,
+          };
+          d.metadata[BUBBLES_NAME] = mon.name;
           d.metadata[INITIATIVE_MODKEY] = mon.dexMod;
+          d.name = mon.name;
         }
-        d.name = mon.name;
       }
     });
   } catch (e) {

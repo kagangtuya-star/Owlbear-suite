@@ -210,16 +210,20 @@ async function handleSelection(selection: string[] | undefined): Promise<void> {
     await closeIfNotPinned();
     return;
   }
-  // 2026-05-10c — was unconditional skip on CC / bestiary binding,
-  // which made the popover never follow CC- or bestiary-bound
-  // characters even when the user wanted exactly that. Per user's
-  // 2026-05-10 spec ("血条组件的数据需要和当前聚焦角色同步和修改"),
-  // the bar now follows ALL valid character selections and lives
-  // alongside whatever popover the bestiary / cc-info module also
-  // opens. Users who want it OFF on a CC-bound or bestiary-bound
-  // token can right-click → 移除血条组件 once; the flag becomes
-  // `false` and the auto-add gate respects it.
-  void BESTIARY_SLUG_KEY; void CC_BIND_KEY;
+  // 2026-05-12 — user request #9: tokens BOUND to a character card OR
+  // a bestiary monster shouldn't get the standalone hp-bar popover
+  // auto-attached. The cc-info / monster-info popovers already show
+  // HP/AC inline, so the floating hp-bar popover is redundant +
+  // visually duplicates the bubble. The right-click "添加血条组件"
+  // still works manually for users who DO want both.
+  const hasCcBind =
+    typeof meta[CC_BIND_KEY] === "string" && (meta[CC_BIND_KEY] as string).length > 0;
+  const hasBestiaryBind =
+    typeof meta[BESTIARY_SLUG_KEY] === "string" && (meta[BESTIARY_SLUG_KEY] as string).length > 0;
+  if (hasCcBind || hasBestiaryBind) {
+    await closeIfNotPinned();
+    return;
+  }
   // Auto-add: when the token has NEVER had the flag (undefined) AND
   // already has bubbles metadata, opt the token into the standalone
   // HP bar by setting the flag. This is the "select a vanilla token

@@ -65,6 +65,44 @@ async function hideOverlay() {
   overlayShown = false;
 }
 
+/**
+ * 2026-05-12 — interrupt any in-flight pointer drag on the current
+ * client. `player.deselect()` alone doesn't tear down an active
+ * drag (OBR's drag handler is independent of selection state), so
+ * a player who was MID-DRAG when time stop / focus camera fired
+ * would happily keep dragging right through the cinematic.
+ *
+ * Recipe: briefly toggle `locked: true` on the currently-selected
+ * items (which DOES break OBR's drag handler), then deselect, then
+ * restore unlock after a short delay. Players have write permission
+ * on tokens they own (createdUserId match), which covers every
+ * token they could be dragging in the first place.
+ *
+ * Safe to call on GM too — it's a no-op if nothing is selected and
+ * any in-flight drag will be interrupted symmetrically.
+ */
+async function interruptInFlightDrag(): Promise<void> {
+  try {
+    const sel = await OBR.player.getSelection();
+    if (!sel || sel.length === 0) return;
+    const ids = [...sel];
+    try {
+      await OBR.scene.items.updateItems(ids, (drafts) => {
+        for (const d of drafts) d.locked = true;
+      });
+    } catch { /* no write perms — skip lock */ }
+    try { await OBR.player.deselect(); } catch {}
+    // Unlock after the drag has had time to die. 250 ms is enough
+    // for OBR's drag system to register the lock + cancel the
+    // gesture; longer would visibly delay the player's next click.
+    setTimeout(() => {
+      OBR.scene.items.updateItems(ids, (drafts) => {
+        for (const d of drafts) d.locked = false;
+      }).catch(() => {});
+    }, 250);
+  } catch {}
+}
+
 // Per user feedback (2026-04-30): time stop should ONLY block player
 // input via the full-screen overlay + force-deselect. We no longer
 // lock individual tokens — that was belt-and-suspenders that also
@@ -145,11 +183,15 @@ export async function setupTimeStop(): Promise<void> {
     })
   );
 
-  // Players: on ON broadcast, force deselect + show overlay (modal blocks pointer)
+  // Players: on ON broadcast, interrupt any in-flight drag (lock+
+  // deselect+unlock) + show overlay (modal blocks pointer). The
+  // interrupt is critical — bare deselect doesn't kill an active
+  // drag, so a player mid-drag at the moment of time-stop would
+  // happily fly their token across the map.
   unsubs.push(
     OBR.broadcast.onMessage(BROADCAST_ON, async () => {
       if (!isGM) {
-        try { await OBR.player.deselect(); } catch {}
+        await interruptInFlightDrag();
         await showOverlay(false);
       }
       notifyClusterState(true);
@@ -167,7 +209,7 @@ export async function setupTimeStop(): Promise<void> {
   const checkState = async () => {
     if (!(await OBR.scene.isReady())) return;
     if (await isTimeStopActive()) {
-      if (!isGM) { try { await OBR.player.deselect(); } catch {} }
+      if (!isGM) await interruptInFlightDrag();
       await showOverlay(isGM);
       notifyClusterState(true);
     } else {

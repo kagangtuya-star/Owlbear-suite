@@ -411,6 +411,27 @@ export async function importLocalJson(filename: string, jsonText: string): Promi
       error: "JSON 顶层缺少识别的内容键（应为 monster / spell / item / feat 等）",
     };
   }
+  // 2026-05-12 — user request #8: re-importing the same filename
+  // should REPLACE the previous file, not stack a second copy
+  // alongside it. Previously the import always generated a new
+  // unique id, so a user updating their homebrew JSON ended up with
+  // two entries — the bestiary listing showed both, and bound
+  // tokens kept showing the older monster data because slug lookups
+  // hit whichever entry rawBySlug saw last. Now we look for a
+  // matching filename + kind and delete it first.
+  const existing = readIndex().files.filter(
+    (f) => f.filename === filename && f.kind === kind,
+  );
+  for (const stale of existing) {
+    await deleteFile(stale.id);
+  }
+  if (existing.length > 0) {
+    const state = readIndex();
+    state.files = state.files.filter(
+      (f) => !(f.filename === filename && f.kind === kind),
+    );
+    await writeIndex(state);
+  }
   const id = `local-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   try {
     await writeFile(id, parsed);
@@ -485,6 +506,20 @@ export async function importLocalMd(filename: string, mdText: string): Promise<I
   if (sections.reaction?.length) monster.reaction = sections.reaction;
   if (sections.legendary?.length) monster.legendary = sections.legendary;
   const synth = { monster: [monster] };
+  // 2026-05-12 — same replace-on-duplicate behaviour as importLocalJson.
+  const existing = readIndex().files.filter(
+    (f) => f.filename === filename && f.kind === "monster",
+  );
+  for (const stale of existing) {
+    await deleteFile(stale.id);
+  }
+  if (existing.length > 0) {
+    const state = readIndex();
+    state.files = state.files.filter(
+      (f) => !(f.filename === filename && f.kind === "monster"),
+    );
+    await writeIndex(state);
+  }
   const id = `local-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   try {
     await writeFile(id, synth);
