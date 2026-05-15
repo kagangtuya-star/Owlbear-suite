@@ -1219,8 +1219,31 @@ function buildHpShimmer(ctx: BuildContext, L: BarLayout, ratio: number): any {
 }
 
 
+// 2026-05-15 — auto-shrink the HP bar font when the text gets too long
+// for the bar. The default `L.barFontSize` is tuned for the 5-7 char
+// "HP/maxHp" string (e.g. "45/60"); when temp HP is present the text
+// grows to "45/60 +12" (9-10 chars) and would overflow the bar — in
+// overhead mode the overflow draws on top of the AC shield, which the
+// user reported as "字会溢出挡住护甲".
+//
+// Heuristic: estimate text width as `chars * fontSize * 0.55em`. Digits
+// + slash + space all sit in the narrow end of the typical font's
+// glyph widths, so 0.55em per char is a safe upper bound. If the
+// estimate exceeds 95% of the bar's text-bbox width we scale the font
+// down uniformly to fit. Standard mode rarely triggers this (the bar
+// takes the full totalSpan), so the legacy look on tokens without
+// temp HP is preserved.
+function fitBarFontSize(text: string, baseFontSize: number, boxWidth: number): number {
+  const estCharWidth = baseFontSize * 0.55;
+  const estTextWidth = text.length * estCharWidth;
+  const maxTextWidth = boxWidth * 0.95;
+  if (estTextWidth <= maxTextWidth) return baseFontSize;
+  return baseFontSize * (maxTextWidth / estTextWidth);
+}
+
 function buildBarText(ctx: BuildContext, L: BarLayout, data: BubbleData): any {
   const text = `${data.hp}/${data.maxHp}${data.tempHp > 0 ? ` +${data.tempHp}` : ""}`;
+  const adjustedFontSize = fitBarFontSize(text, L.barFontSize, L.barTextBoxWidth);
   // Stroke width tracks bar height too so the text outline doesn't
   // dominate the glyphs on a tiny familiar (was a fixed 1.5 px →
   // looked like a black blob at small scale).
@@ -1235,7 +1258,7 @@ function buildBarText(ctx: BuildContext, L: BarLayout, data: BubbleData): any {
     .textAlign("CENTER")
     .textAlignVertical("MIDDLE")
     .fontFamily(FONT_FAMILY)
-    .fontSize(L.barFontSize)
+    .fontSize(adjustedFontSize)
     .fontWeight(700)
     .fillColor("#ffffff")
     .fillOpacity(1)
@@ -1470,6 +1493,11 @@ async function patchGeometry(patches: Array<{ entry: BubbleEntry; w: Wanted }>):
             // text stuck at "20/66". Reassigning the whole object
             // forces the partial-update path to ship the change.
             const newText = `${w.data.hp}/${w.data.maxHp}${w.data.tempHp > 0 ? ` +${w.data.tempHp}` : ""}`;
+            // 2026-05-15 — auto-shrink font on live updates too, so
+            // gaining/losing temp HP visibly re-fits the text inside
+            // the bar without forcing a full rebuild. Mirror of
+            // buildBarText's fitBarFontSize call above.
+            const adjustedFontSize = fitBarFontSize(newText, L.barFontSize, L.barTextBoxWidth);
             // 2026-05-13b — text width = barTextBoxWidth so overhead-
             // mode patches keep HP digits clear of the overlapping
             // shield. Standard mode is unchanged (barTextBoxWidth ==
@@ -1481,7 +1509,7 @@ async function patchGeometry(patches: Array<{ entry: BubbleEntry; w: Wanted }>):
               plainText: newText,
               style: {
                 ...(da.text.style ?? {}),
-                fontSize: L.barFontSize,
+                fontSize: adjustedFontSize,
                 strokeWidth: Math.max(0.4, L.barHeight * 0.075),
               },
             };
