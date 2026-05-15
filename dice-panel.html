@@ -1047,16 +1047,33 @@ html,body{
   border-radius:0;
   cursor:pointer;
   flex-shrink:0;
-  transition:border-color .12s, transform .08s;
+  /* 2026-05-15 — dropped `transform:translateY(-1px)` on hover.
+     Combined with the X-button `display:none → flex` toggle and any
+     re-render churn it caused the whole chip strip to bounce up and
+     down. Kept the colour transition for a clean visual response. */
+  transition:border-color .12s, background .12s;
 }
 .skin-lib-chip:hover{
   border-color:var(--accent);
-  transform:translateY(-1px);
+  background:rgba(93,173,226,0.12);
 }
 .skin-lib-chip.on{
   border-color:var(--accent);
   box-shadow:0 0 0 2px rgba(93,173,226,0.42) inset;
 }
+/* Default-skin chip — visually distinguished by a tiny corner dot so
+   the user can spot "back to default" at a glance without reading. */
+.skin-lib-chip.default-chip{
+  background:rgba(255,255,255,0.04);
+}
+.skin-lib-chip.default-chip::after{
+  content:"";
+  position:absolute;bottom:2px;right:2px;
+  width:4px;height:4px;
+  background:var(--text-mute);border-radius:50%;
+  pointer-events:none;
+}
+.skin-lib-chip.default-chip.on::after{background:var(--accent)}
 .skin-lib-thumb{
   width:32px;height:32px;
   display:flex;align-items:center;justify-content:center;

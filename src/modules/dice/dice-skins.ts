@@ -175,16 +175,28 @@ async function writeActiveBoth(s: DiceSkins): Promise<void> {
   try { await OBR.player.setMetadata({ [SKINS_KEY]: s }); } catch {}
 }
 
+// 2026-05-15 — one-shot session flags for the LS→OBR bootstrap push.
+// The previous "sync on every read" formed an infinite loop:
+//   read → setMetadata → OBR.player.onChange → renderSkinsTab → read → …
+// re-creating 7 active-thumb <video> elements per iteration and
+// flooding Chrome's WebMediaPlayer pool. The flag guarantees the
+// push runs at most once per browsing session per blob.
+let _activeSyncedThisSession = false;
+let _libSyncedThisSession = false;
+
 // --- low-level reads --------------------------------------------------------
 
 async function readActiveSkinsRaw(): Promise<DiceSkins> {
   const ls = readLSActive();
   if (!isEmptyActive(ls)) {
-    // localStorage is the source of truth; lazy-sync to OBR so
-    // room-mates see the same skins even on first roll after a
-    // room-switch. Fire-and-forget — failure here just means the
-    // OBR side stays a bit stale until the next explicit write.
-    OBR.player.setMetadata({ [SKINS_KEY]: ls }).catch(() => {});
+    // localStorage is the source of truth. ONE-TIME lazy push to OBR
+    // so room-mates see the data on the first roll after a room
+    // switch / fresh browser load. Subsequent reads skip — explicit
+    // writes (setActiveSkin etc.) keep OBR in sync from then on.
+    if (!_activeSyncedThisSession) {
+      _activeSyncedThisSession = true;
+      OBR.player.setMetadata({ [SKINS_KEY]: ls }).catch(() => {});
+    }
     return ls;
   }
   // First time on this browser — bootstrap from whatever the current
@@ -215,7 +227,10 @@ async function readActiveSkinsForPlayerRaw(playerId: string): Promise<DiceSkins>
 async function readLibraryRaw(): Promise<DiceSkinLibrary> {
   const ls = readLSLibrary();
   if (!isEmptyLibrary(ls)) {
-    OBR.player.setMetadata({ [SKIN_LIB_KEY]: ls }).catch(() => {});
+    if (!_libSyncedThisSession) {
+      _libSyncedThisSession = true;
+      OBR.player.setMetadata({ [SKIN_LIB_KEY]: ls }).catch(() => {});
+    }
     return ls;
   }
   try {

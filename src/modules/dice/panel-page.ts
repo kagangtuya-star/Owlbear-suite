@@ -1880,15 +1880,29 @@ async function renderSkinsTab(): Promise<void> {
     const activeSkin = active[type] ?? null;
     const library = lib.libs[type] ?? [];
     const isRandom = !!lib.random[type];
-    const libStripHtml = library.length === 0
-      ? `<span class="skin-lib-empty">皮肤库空 — 右键场景里的附件「设为我的骰子皮肤」，或下方粘贴 URL，加入这里</span>`
-      : library.map((s) => {
-          const isActive = !isRandom && !!activeSkin && activeSkin.url === s.url;
-          return `<span class="skin-lib-chip${isActive ? " on" : ""}" data-type="${type}" data-url="${escapeHtml(s.url)}" title="${isActive ? "当前活动皮肤" : "点击设为当前皮肤"}">` +
-            `<span class="skin-lib-thumb">${thumbHtml(s, type)}</span>` +
-            `<button class="skin-lib-del" type="button" data-type="${type}" data-url="${escapeHtml(s.url)}" title="从皮肤库移除">×</button>` +
-          `</span>`;
-        }).join("");
+    // 2026-05-15 — synthetic "default" chip prepended to every die's
+    // library strip so the user always sees the stock die art and can
+    // revert with one click. Carries `data-default="1"` (NOT a real
+    // library entry); the click handler sees that flag and calls
+    // setActiveSkin(type, null) to clear active back to default.
+    const defaultUrl = assetUrl(`${type}.png`);
+    const isDefaultActive = !isRandom && !activeSkin;
+    const defaultChipHtml =
+      `<span class="skin-lib-chip default-chip${isDefaultActive ? " on" : ""}" data-type="${type}" data-default="1" title="${isDefaultActive ? "当前正在使用默认皮肤" : "点击恢复为默认皮肤"}">` +
+        `<span class="skin-lib-thumb"><img src="${escapeHtml(defaultUrl)}" alt="${type}" class="is-default" loading="lazy"></span>` +
+      `</span>`;
+    const customChipsHtml = library.map((s) => {
+      const isActive = !isRandom && !!activeSkin && activeSkin.url === s.url;
+      return `<span class="skin-lib-chip${isActive ? " on" : ""}" data-type="${type}" data-url="${escapeHtml(s.url)}" title="${isActive ? "当前活动皮肤" : "点击设为当前皮肤"}">` +
+        `<span class="skin-lib-thumb">${thumbHtml(s, type)}</span>` +
+        `<button class="skin-lib-del" type="button" data-type="${type}" data-url="${escapeHtml(s.url)}" title="从皮肤库移除">×</button>` +
+      `</span>`;
+    }).join("");
+    const libStripHtml = defaultChipHtml + (
+      library.length === 0
+        ? `<span class="skin-lib-empty">右键场景里的附件「设为我的骰子皮肤」，或下方粘贴 URL，加入这里</span>`
+        : customChipsHtml
+    );
     const statusLabel = isRandom
       ? `随机 (${library.length})`
       : (activeSkin ? "自定义" : "默认");
@@ -2003,6 +2017,19 @@ if (skinList) {
     const libChip = target.closest<HTMLElement>(".skin-lib-chip");
     if (libChip) {
       const type = libChip.dataset.type as DiceType | undefined;
+      // Default chip path: clear active to revert to the stock die
+      // PNG. Random mode also goes off so the user actually sees
+      // the default on the next roll instead of a random library pick.
+      if (libChip.dataset.default === "1" && type) {
+        try {
+          await setRandomMode(type, false);
+          await setActiveSkin(type, null);
+        } catch (err) {
+          console.error("[obr-suite/dice] reset to default failed", err);
+        }
+        scheduleRenderSkinsTab();
+        return;
+      }
       const url = libChip.dataset.url;
       if (type && url) {
         try {
