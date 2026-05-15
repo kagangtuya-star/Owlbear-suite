@@ -102,13 +102,10 @@ body.mobile{width:92px;height:64px;transform:scale(0.5);transform-origin:top lef
 </style>
 </head>
 <body>
-<script>
-  // Read `?mobile=1` from URL and toggle a class so CSS can scale.
-  // Inline so the class is present before the wrap is parsed.
-  if (new URLSearchParams(location.search).get("mobile") === "1") {
-    document.body.classList.add("mobile");
-  }
-</script>
+<!-- 2026-05-15 — mobile-class init moved INTO src/cluster.ts so OBR's
+     strict plugin CSP (script-src-elem 'self' only) doesn't block an
+     inline non-module script. Vite bundles cluster.ts before the
+     wrap is hydrated; the class flicker risk is purely cosmetic. -->
 <div class="wrap" id="wrap" data-side="right">
   <button class="main" id="main" type="button" title="枭熊菜单 / Suite Menu">
     <img src="/suite/exe_icon.png" alt="">

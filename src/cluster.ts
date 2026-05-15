@@ -5,6 +5,17 @@ import { bindPanelDrag, applyDragSide, watchDragSide } from "./utils/panelDrag";
 import { PANEL_IDS } from "./utils/panelLayout";
 import { installDebugOverlay } from "./utils/debugOverlay";
 
+// 2026-05-15 — `?mobile=1` class init (was inline <script> in
+// cluster.html — blocked by OBR's plugin CSP `script-src-elem 'self'`,
+// no `unsafe-inline`). Module scripts get bundled and ARE allowed,
+// so we run it here at the top before OBR.onReady so the CSS scale
+// kicks in on first paint.
+try {
+  if (new URLSearchParams(location.search).get("mobile") === "1") {
+    document.body.classList.add("mobile");
+  }
+} catch { /* ignore */ }
+
 // Cluster trigger iframe — JUST the toggle button. Clicking broadcasts
 // to background.ts which opens / closes the separate cluster-row popover
 // anchored ABOVE this trigger. The trigger never changes size; the row

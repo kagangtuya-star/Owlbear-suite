@@ -1,6 +1,18 @@
 import OBR from "@owlbear-rodeo/sdk";
 import { DieResult, sidesOf } from "./types";
 
+// 2026-05-15 — i18n hint patch (was inline <script> in dice-replay.html,
+// blocked by OBR's plugin CSP `script-src-elem 'self'`). Module
+// scripts ARE allowed, so we run it here before the main module logic.
+try {
+  const v = localStorage.getItem("obr-suite/lang");
+  if (v === "en") {
+    document.documentElement.lang = "en";
+    const h = document.getElementById("hint");
+    if (h) h.textContent = "Click bubble or click row again to close";
+  }
+} catch { /* ignore */ }
+
 // Replay overlay modal — opens when a player clicks a row in the
 // dice-history popover. Reads localStorage history (shared key with
 // the panel + history popover), filters by collectiveId from URL,

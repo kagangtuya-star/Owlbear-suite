@@ -1665,13 +1665,27 @@ function guessMime(url: string): string {
   return "";
 }
 
-function thumbHtml(skin: DiceSkin | null, type: DiceType): string {
+// 2026-05-15 — `animate` gates the costly `<video autoplay loop>`
+// path. Chrome allocates one WebMediaPlayer per autoplay video and
+// caps the global pool — past ~75 in a tab it logs
+// `[Intervention] Blocked attempt to create a WebMediaPlayer …` and
+// then everything (including OBR scene-items IPC) starts choking.
+//
+// The skins tab can easily blow past that: 7 dice × N library chips
+// each. So we ONLY autoplay the ACTIVE thumb (one per die row, max 7
+// total) and use a `preload="metadata"` poster frame for every other
+// chip. preload=metadata loads the first frame without claiming a
+// player slot — perfect for a thumbnail. `disableremoteplayback`
+// also shaves a couple of milliseconds per element.
+function thumbHtml(skin: DiceSkin | null, type: DiceType, animate = false): string {
   if (skin) {
-    return isVideoSkin(skin)
-      ? `<video src="${escapeHtml(skin.url)}" autoplay loop muted playsinline></video>`
-      : `<img src="${escapeHtml(skin.url)}" alt="">`;
+    if (isVideoSkin(skin)) {
+      const playFlags = animate ? "autoplay loop muted playsinline" : "preload=\"metadata\" muted playsinline disableremoteplayback";
+      return `<video src="${escapeHtml(skin.url)}" ${playFlags}></video>`;
+    }
+    return `<img src="${escapeHtml(skin.url)}" alt="" loading="lazy">`;
   }
-  return `<img src="${escapeHtml(assetUrl(`${type}.png`))}" alt="${type}" class="is-default">`;
+  return `<img src="${escapeHtml(assetUrl(`${type}.png`))}" alt="${type}" class="is-default" loading="lazy">`;
 }
 
 async function renderSkinsTab(): Promise<void> {
@@ -1736,7 +1750,7 @@ async function renderSkinsTab(): Promise<void> {
       : (activeSkin ? "自定义" : "默认");
     return (
       `<div class="skin-row" data-type="${type}">` +
-        `<span class="skin-thumb">${thumbHtml(activeSkin, type)}</span>` +
+        `<span class="skin-thumb">${thumbHtml(activeSkin, type, true)}</span>` +
         `<div class="skin-body">` +
           `<div class="skin-head">` +
             `<span class="skin-name">${type}</span>` +
