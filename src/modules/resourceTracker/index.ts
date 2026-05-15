@@ -46,6 +46,13 @@ const PANEL_ICON_URL = assetUrl("resource-tracker-icon.svg");
 // broadcast that left the toolbar tool needing two clicks to reopen.
 const PANEL_OPEN_KEY = `${PLUGIN_ID}/panel-open`;
 const PANEL_SIDE_GAP = 64; // px gap each side → tool toolbar stays clickable
+// 2026-05-16 — MUI's default `MuiDialog-paper` enforces
+// `maxHeight: calc(100% - 64px)` even when `hidePaper: true` strips
+// the visual styling. Asking OBR for height: vh would make the iframe
+// taller than the clamped Paper → Paper scrolls. Subtract the margin
+// up front so iframe matches Paper exactly. See cc-panel openMainPopover
+// for the full diagnosis.
+const MUI_DIALOG_MARGIN = 64;
 
 const unsubs: Array<() => void> = [];
 let modalOpen = false;
@@ -100,7 +107,7 @@ async function openResourcePanel(): Promise<void> {
       id: PANEL_MODAL_ID,
       url: PANEL_URL,
       width: Math.max(360, Math.round(vw) - PANEL_SIDE_GAP * 2),
-      height: Math.max(240, Math.round(vh)),
+      height: Math.max(240, Math.round(vh) - MUI_DIALOG_MARGIN),
       hideBackdrop: true, // no dark overlay → side gaps stay interactive
       hidePaper: true,
     });

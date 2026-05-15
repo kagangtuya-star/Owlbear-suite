@@ -142,7 +142,21 @@ function isAutoInfoEnabled(): boolean {
 // panel will reuse). OBR's Modal type exposes only width/height (no
 // inset/position), and modals are centred, so the gap is symmetric
 // left+right; `hideBackdrop` keeps those side strips interactive.
+//
+// 2026-05-16 — MUI gotcha. `hidePaper: true` only hides the visual
+// paper styling (background, shadow) — the `MuiDialog-paper` element
+// is still present and still carries MUI's default
+// `maxHeight: calc(100% - 64px)`. If we ask OBR for height = vh, the
+// iframe is sized to vh but the Paper clamps to vh-64; iframe taller
+// than Paper → Paper scrolls (= the "div.panel 919 但内容溢出 →
+// 外滚动条" the user reported even though our internal CSS had
+// overflow:hidden everywhere). The 64px is split as 32 top + 32
+// bottom by MUI's vertical centering, so the same effect applies
+// horizontally — width clamps to vw-64 if we asked for vw.
+// Subtract MUI's margin BEFORE handing the size to OBR so the
+// iframe matches Paper exactly and nothing scrolls.
 const PANEL_SIDE_GAP = 64;
+const MUI_DIALOG_MARGIN = 64;
 async function openMainPopover() {
   try {
     let vw = 1280;
@@ -153,13 +167,17 @@ async function openMainPopover() {
         OBR.viewport.getHeight(),
       ]);
     } catch { /* viewport read failed — fall back to sane defaults */ }
+    // 2026-05-16 — width already shrinks by PANEL_SIDE_GAP * 2 = 128,
+    // which is wider than MUI's 64 horizontal margin so the side
+    // toolbar stays visible AND the width fits MUI's max. Height
+    // needs the MUI_DIALOG_MARGIN subtracted to match Paper's max.
     await OBR.modal.open({
       id: PANEL_MODAL_ID,
       url: PANEL_URL,
       width: Math.max(360, Math.round(vw) - PANEL_SIDE_GAP * 2),
-      height: Math.max(240, Math.round(vh)),
+      height: Math.max(240, Math.round(vh) - MUI_DIALOG_MARGIN),
       hideBackdrop: true, // no dark overlay → the side gaps stay interactive
-      hidePaper: true,    // no Material paper container
+      hidePaper: true,    // no Material paper background / shadow
       // disablePointerEvents stays default (false) — panel buttons need clicks
     });
     try { localStorage.setItem(PANEL_OPEN_KEY, "1"); } catch {}
