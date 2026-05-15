@@ -4,9 +4,25 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Buff Studio · 多图层特效合成</title>
-<link rel="stylesheet" href="./style.css?v=2026-05-15c">
+<link rel="stylesheet" href="./style.css?v=2026-05-15d">
 </head>
 <body>
+
+<!-- Contributor-call banner. Dismissable; localStorage persists the
+     dismissed state so users only see it once. -->
+<aside class="contrib-banner" id="contribBanner" role="status" aria-live="polite">
+  <span class="cb-icon" aria-hidden="true">
+    <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M8 2 L9.7 6 L14 6.5 L10.85 9.6 L11.6 14 L8 11.9 L4.4 14 L5.15 9.6 L2 6.5 L6.3 6 z"/>
+    </svg>
+  </span>
+  <span class="cb-text">
+    <b>老师们！如果做出了不错的 buff 特效，求求请打包发我一份（文件形式）！</b>
+    我会把它收进默认特效里送给所有人用 —— 目前的默认特效真的太丑了，但鄙人没时间一个一个搓，
+    实在抱歉。<b>邮箱：1763086701@qq.com</b> · 微信 / QQ 加好友均可。
+  </span>
+  <button class="cb-close" id="contribBannerClose" type="button" title="关闭（之后不再显示）" aria-label="关闭">×</button>
+</aside>
 
 <header class="topbar">
   <div class="brand">
@@ -196,7 +212,7 @@
 
 </main>
 
-<script type="module" src="./app.js?v=2026-05-15b"></script>
+<script type="module" src="./app.js?v=2026-05-15d"></script>
 
 </body>
 </html>

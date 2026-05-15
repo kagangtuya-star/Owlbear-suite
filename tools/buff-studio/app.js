@@ -78,6 +78,25 @@ const BLEND_OPTS = [
   ["lighter", "相加发光"], ["multiply", "正片叠底"],
 ];
 const LS_DRAWINGS = "buff-studio:drawings";
+const LS_CONTRIB_BANNER_DISMISSED = "buff-studio:contrib-banner-dismissed";
+
+// Contributor-call banner — one-shot dismissable. Persists the
+// dismissal in localStorage so users only see it once per browser.
+(function initContribBanner() {
+  const el = document.getElementById("contribBanner");
+  const closeBtn = document.getElementById("contribBannerClose");
+  if (!el || !closeBtn) return;
+  try {
+    if (localStorage.getItem(LS_CONTRIB_BANNER_DISMISSED) === "1") {
+      el.classList.add("hidden");
+      return;
+    }
+  } catch { /* ignore */ }
+  closeBtn.addEventListener("click", () => {
+    el.classList.add("hidden");
+    try { localStorage.setItem(LS_CONTRIB_BANNER_DISMISSED, "1"); } catch {}
+  });
+})();
 
 // ============ Small helpers ============
 function esc(s) {

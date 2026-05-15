@@ -116,15 +116,88 @@ function normalizeLibrary(raw: unknown): DiceSkinLibrary {
   return out;
 }
 
+// --- localStorage mirror ----------------------------------------------------
+//
+// 2026-05-15 — `OBR.player.setMetadata` is scoped to the CURRENT room,
+// so a user's skin library evaporates as soon as they join a different
+// room. Mirror both blobs into `localStorage` (per-browser, cross-room)
+// and treat localStorage as the source of truth for SELF reads:
+//
+//   • write paths: write BOTH localStorage AND OBR player metadata
+//     (so other clients in this room can still see the rolls' skins).
+//   • read SELF: localStorage first; if empty, lazy-bootstrap from OBR
+//     (covers "fresh browser, returning to an old room with prior
+//     OBR-side data") and write the result back to localStorage so
+//     subsequent reads are stable.
+//   • read OTHER players: still from their party metadata — we can't
+//     reach their localStorage anyway.
+//   • whenever localStorage holds non-empty data on read, we lazy-push
+//     it to OBR (fire-and-forget) so room-mates see the same skins
+//     even on the first roll after a fresh room-join.
+
+const LS_SKINS_KEY = "obr-suite/dice/skins";       // active map mirror
+const LS_LIB_KEY   = "obr-suite/dice/skin-library"; // library + sets + random
+
+function readLSActive(): DiceSkins {
+  try {
+    const raw = localStorage.getItem(LS_SKINS_KEY);
+    if (!raw) return {};
+    return normalizeSkins(JSON.parse(raw));
+  } catch { return {}; }
+}
+function writeLSActive(s: DiceSkins): void {
+  try { localStorage.setItem(LS_SKINS_KEY, JSON.stringify(s)); } catch {}
+}
+function readLSLibrary(): DiceSkinLibrary {
+  try {
+    const raw = localStorage.getItem(LS_LIB_KEY);
+    if (!raw) return emptyLibrary();
+    return normalizeLibrary(JSON.parse(raw));
+  } catch { return emptyLibrary(); }
+}
+function writeLSLibrary(lib: DiceSkinLibrary): void {
+  try { localStorage.setItem(LS_LIB_KEY, JSON.stringify(lib)); } catch {}
+}
+function isEmptyActive(s: DiceSkins): boolean {
+  return Object.keys(s).length === 0;
+}
+function isEmptyLibrary(lib: DiceSkinLibrary): boolean {
+  return Object.keys(lib.libs).length === 0
+    && Object.keys(lib.random).length === 0
+    && lib.sets.length === 0;
+}
+
+// Write the active-skin map to BOTH localStorage and OBR player meta.
+// All "set / clear active skin" code paths go through here so the two
+// stores stay in lock-step.
+async function writeActiveBoth(s: DiceSkins): Promise<void> {
+  writeLSActive(s);
+  try { await OBR.player.setMetadata({ [SKINS_KEY]: s }); } catch {}
+}
+
 // --- low-level reads --------------------------------------------------------
 
 async function readActiveSkinsRaw(): Promise<DiceSkins> {
+  const ls = readLSActive();
+  if (!isEmptyActive(ls)) {
+    // localStorage is the source of truth; lazy-sync to OBR so
+    // room-mates see the same skins even on first roll after a
+    // room-switch. Fire-and-forget — failure here just means the
+    // OBR side stays a bit stale until the next explicit write.
+    OBR.player.setMetadata({ [SKINS_KEY]: ls }).catch(() => {});
+    return ls;
+  }
+  // First time on this browser — bootstrap from whatever the current
+  // room's OBR metadata happens to have.
   try {
     const meta = await OBR.player.getMetadata();
-    return normalizeSkins(meta?.[SKINS_KEY]);
-  } catch {
-    return {};
-  }
+    const obr = normalizeSkins(meta?.[SKINS_KEY]);
+    if (!isEmptyActive(obr)) {
+      writeLSActive(obr);
+      return obr;
+    }
+  } catch { /* offline-style fallthrough */ }
+  return {};
 }
 
 async function readActiveSkinsForPlayerRaw(playerId: string): Promise<DiceSkins> {
@@ -140,12 +213,20 @@ async function readActiveSkinsForPlayerRaw(playerId: string): Promise<DiceSkins>
 }
 
 async function readLibraryRaw(): Promise<DiceSkinLibrary> {
+  const ls = readLSLibrary();
+  if (!isEmptyLibrary(ls)) {
+    OBR.player.setMetadata({ [SKIN_LIB_KEY]: ls }).catch(() => {});
+    return ls;
+  }
   try {
     const meta = await OBR.player.getMetadata();
-    return normalizeLibrary(meta?.[SKIN_LIB_KEY]);
-  } catch {
-    return emptyLibrary();
-  }
+    const obr = normalizeLibrary(meta?.[SKIN_LIB_KEY]);
+    if (!isEmptyLibrary(obr)) {
+      writeLSLibrary(obr);
+      return obr;
+    }
+  } catch { /* fallthrough */ }
+  return emptyLibrary();
 }
 
 async function readLibraryForPlayerRaw(playerId: string): Promise<DiceSkinLibrary> {
@@ -204,10 +285,12 @@ export async function readMyLibrary(): Promise<DiceSkinLibrary> {
 
 /** Persist the full library. Must be a deep, mutated copy from readMyLibrary. */
 export async function writeMyLibrary(lib: DiceSkinLibrary): Promise<void> {
-  // OBR.player.setMetadata only merges at the top metadata-key level —
-  // setting SKIN_LIB_KEY replaces the whole library blob, which is what
-  // we want (otherwise removed entries would linger).
-  await OBR.player.setMetadata({ [SKIN_LIB_KEY]: lib });
+  // Mirror BOTH stores: localStorage is the cross-room source of truth,
+  // OBR player metadata is what room-mates read for this player's rolls.
+  // The OBR side replaces the whole SKIN_LIB_KEY blob (no merge) so a
+  // removed library entry doesn't linger.
+  writeLSLibrary(lib);
+  try { await OBR.player.setMetadata({ [SKIN_LIB_KEY]: lib }); } catch {}
 }
 
 /** Read the active-skin map only (one DiceSkin per die at most). */
@@ -226,7 +309,7 @@ export async function writeSkin(type: DiceType, skin: DiceSkin | null): Promise<
   if (skin) active[type] = skin;
   else delete active[type];
   // Write active map first (this is what the roll-render path reads).
-  await OBR.player.setMetadata({ [SKINS_KEY]: active });
+  await writeActiveBoth(active);
   if (skin) {
     const arr = (lib.libs[type] ?? []).slice();
     if (!arr.some((s) => s.url === skin.url)) arr.push(skin);
@@ -310,7 +393,7 @@ export async function applySet(setId: string): Promise<void> {
       libDirty = true;
     }
   }
-  await OBR.player.setMetadata({ [SKINS_KEY]: active });
+  await writeActiveBoth(active);
   if (libDirty) await writeMyLibrary(lib);
 }
 
@@ -328,5 +411,5 @@ export async function setActiveSkin(type: DiceType, skin: DiceSkin | null): Prom
   const active = await readActiveSkinsRaw();
   if (skin) active[type] = skin;
   else delete active[type];
-  await OBR.player.setMetadata({ [SKINS_KEY]: active });
+  await writeActiveBoth(active);
 }

@@ -34,6 +34,50 @@ html, body {
   line-height: 1.5;
 }
 
+/* ====== Contributor-call banner (2026-05-15) ======
+   Yellow warning style at the very top of buff-studio. Dismissable;
+   .hidden via JS once the user clicks ×, with the dismissed state
+   persisted in localStorage so they don't see it again. */
+.contrib-banner {
+  display: flex; align-items: flex-start; gap: 10px;
+  padding: 10px 18px;
+  background: linear-gradient(180deg, rgba(245,166,35,0.18), rgba(245,166,35,0.10));
+  border-bottom: 1px solid rgba(245,166,35,0.55);
+  color: #fce5b0;
+  font-size: 12.5px; line-height: 1.55;
+  letter-spacing: 0.2px;
+}
+.contrib-banner.hidden { display: none; }
+.contrib-banner .cb-icon {
+  flex-shrink: 0;
+  width: 22px; height: 22px;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: rgba(245,166,35,0.22);
+  border: 1px solid rgba(245,166,35,0.60);
+  border-radius: 4px;
+  color: #ffc66b;
+  margin-top: 1px;
+}
+.contrib-banner .cb-text { flex: 1; min-width: 0; }
+.contrib-banner b { color: #fff; font-weight: 700; }
+.contrib-banner .cb-close {
+  flex-shrink: 0;
+  width: 24px; height: 24px;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: transparent;
+  border: 1px solid rgba(245,166,35,0.45);
+  border-radius: 4px;
+  color: #fce5b0;
+  font-size: 16px; line-height: 1; font-family: inherit;
+  cursor: pointer;
+  transition: background .12s, color .12s, border-color .12s;
+}
+.contrib-banner .cb-close:hover {
+  background: rgba(245,166,35,0.28);
+  color: #fff;
+  border-color: rgba(245,166,35,0.75);
+}
+
 /* ====== Top bar ====== */
 .topbar {
   display: grid;
