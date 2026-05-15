@@ -15,6 +15,7 @@
 import OBR from "@owlbear-rodeo/sdk";
 import { ICON_LIBRARY } from "./modules/resourceTracker/icons";
 import type { Resource, IconId } from "./modules/resourceTracker/types";
+import { sfxResourceToast, subscribeToSfx } from "./modules/dice/sfx-broadcast";
 
 const BC_RESOURCE_CHANGED = "com.obr-suite/resources/changed";
 const TOAST_HOLD_MS = 5000;     // 2.5 → 5 s per user spec
@@ -146,9 +147,24 @@ function showToast(p: ResourceToastPayload): void {
 }
 
 OBR.onReady(() => {
+  // 2026-05-15 — also subscribe to BC_SFX so the toast iframe's own
+  // audio context (if it ever wakes up) can play sounds. The toast
+  // iframe runs with disablePointerEvents:true, so its AudioContext
+  // is usually suspended — the actual playback happens in any
+  // user-gestured iframe (cluster, cc-info, dice-panel, etc.) which
+  // also subscribes to BC_SFX and receives the LOCAL broadcast.
+  subscribeToSfx();
+
   OBR.broadcast.onMessage(BC_RESOURCE_CHANGED, (event) => {
     const data = event.data as ResourceToastPayload | undefined;
     if (!data || !data.resource || typeof data.delta !== "number") return;
     showToast(data);
+    // 2026-05-15 — quick chime for all participants. BC_RESOURCE_CHANGED
+    // arrives on LOCAL+REMOTE, so this fires once per client. Inside,
+    // sfxResourceToast() broadcasts BC_SFX LOCAL — any user-gestured
+    // iframe on the same client (typically the cluster) plays the
+    // synth chime. Net effect: one soft "blip" per resource change,
+    // heard by everyone in the room.
+    try { sfxResourceToast(); } catch {}
   });
 });

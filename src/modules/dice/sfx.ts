@@ -297,12 +297,26 @@ export function playNextTurn(): void {
   tone({ freq: 587.3, type: "triangle", duration: 0.20, gain: 0.10, attack: 0.005, release: 0.16, delay: 0.02 });
 }
 
+// 2026-05-15 — Resource-change toast chime. Plays for everyone in the
+// room (DM + every player) when any resource changes — same trigger
+// path as the bottom-center toast popup. A soft two-tone "blip" so it
+// reads as "something just happened" without being intrusive. Routed
+// through the initiative channel — same "session pacing" cue group as
+// nextTurn / syncView, so the existing initiative-sfx toggle controls
+// it. Quieter than the turn chime (gain 0.07 vs 0.18) since resource
+// changes happen far more often than turn advances.
+export function playResourceToast(): void {
+  if (!isOnFor("initiative")) return; resume();
+  tone({ freq: 880, type: "sine", duration: 0.10, gain: 0.07, attack: 0.005, release: 0.08 });
+  tone({ freq: 1318.5, type: "sine", duration: 0.14, gain: 0.05, attack: 0.005, release: 0.10, delay: 0.04 });
+}
+
 // Public sfx names — also the broadcast payload `name` field used by
 // sfx-broadcast.ts.
 export type SfxName =
   | "parabola" | "scalePunch" | "numFly" | "numLand"
   | "flashCrit" | "flashFail" | "spin" | "burst" | "same"
-  | "syncView" | "nextTurn";
+  | "syncView" | "nextTurn" | "resourceToast";
 
 export const PLAYERS: Record<SfxName, () => void> = {
   parabola: playParabola,
@@ -316,6 +330,7 @@ export const PLAYERS: Record<SfxName, () => void> = {
   same: playSame,
   syncView: playSyncView,
   nextTurn: playNextTurn,
+  resourceToast: playResourceToast,
 };
 
 // Resume the AudioContext — call from sfx-broadcast.ts on first user
