@@ -36,12 +36,22 @@ body{background:rgba(10,12,22,0.92);backdrop-filter:blur(6px);-webkit-backdrop-f
 .rt-close:hover{background:rgba(231,76,60,0.18);border-color:var(--red);color:#fff}
 
 /* ===== Body — the single scroll region ===== */
+/* 2026-05-16 — explicit `grid-auto-rows: max-content` + `align-items:
+   start` so each row sizes to its tallest card's natural content,
+   shorter cards align to row top (no forced stretch). Without these,
+   when there were many characters the rows would all share a single
+   tall row height and shorter cards looked squashed at the top with
+   weird whitespace; users with many resources saw later resources
+   clipped because `align-items:stretch` (default) plus
+   `overflow:hidden` on .rt-char silently truncated overflow. */
 .rt-body{
   flex:1;min-height:0;overflow-y:auto;
   padding:16px;
   display:grid;
   grid-template-columns:repeat(auto-fill,minmax(300px,1fr));
+  grid-auto-rows:max-content;
   gap:14px;
+  align-items:start;
   align-content:start;
 }
 .rt-body::-webkit-scrollbar{width:8px}

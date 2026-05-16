@@ -83,6 +83,12 @@ html,body{
   padding:10px 12px;height:100%;overflow-y:auto;
   scrollbar-width:none;
   -ms-overflow-style:none;
+  /* 2026-05-16 — `--panel-zoom` set live by info-page.ts based on the
+     iframe's current height vs the 260 px design baseline. Chrome
+     CSS `zoom` scales all descendants — text, spacing, click targets —
+     as a unit so a manually-resized larger popover gets visibly
+     larger text. */
+  zoom:var(--panel-zoom, 1);
 }
 .root::-webkit-scrollbar{display:none;width:0;height:0}
 

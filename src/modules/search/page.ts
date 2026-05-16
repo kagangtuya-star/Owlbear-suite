@@ -1372,33 +1372,87 @@ function spellLevelStr(lvl: any): string {
   if (lvl === 0) return "戏法";
   return `${lvl} 环`;
 }
+// 2026-05-16 — school code → 中文学派 mapping. 5etools uses single-
+// letter codes for the eight 5e schools:
+//   A = Abjuration (防护)     C = Conjuration (咒法)
+//   D = Divination (预言)      E = Enchantment (附魔)
+//   V = Evocation (塑能)       I = Illusion (幻术)
+//   N = Necromancy (死灵)      T = Transmutation (变化)
+// The previous table had C→塑能, D→死灵, N→塑能, V→预言 — four of
+// the eight schools were displaying the wrong Chinese name. Fixed.
 const SCHOOLS: Record<string, string> = {
-  A: "防护", C: "塑能", D: "死灵", E: "附魔", I: "幻术",
-  N: "塑能", T: "变化", V: "预言",
+  A: "防护", C: "咒法", D: "预言", E: "附魔",
+  V: "塑能", I: "幻术", N: "死灵", T: "变化",
 };
 function schoolStr(s: any): string {
   return typeof s === "string" ? SCHOOLS[s] ?? s : "";
 }
+// 2026-05-16 — casting-time unit translation. 5etools sends
+// `{ number, unit }` with `unit` as raw English ("action", "bonus",
+// "reaction", "minute", "hour"). Untranslated this read as "1 action"
+// on the chip; localize for the Chinese UI.
+const CAST_TIME_UNIT_ZH: Record<string, string> = {
+  action: "动作",
+  bonus: "附赠动作",
+  reaction: "反应",
+  minute: "分钟", minutes: "分钟",
+  hour: "小时", hours: "小时",
+  round: "回合", rounds: "回合",
+};
+function castTimeUnitZh(u: unknown): string {
+  if (typeof u !== "string") return "";
+  return CAST_TIME_UNIT_ZH[u.toLowerCase()] ?? u;
+}
 function timeStr(t: any): string {
   if (!Array.isArray(t)) return "";
   return t
-    .map((x) =>
-      typeof x === "object" && x != null
-        ? `${x.number ?? ""} ${x.unit ?? ""}`.trim()
-        : String(x)
-    )
+    .map((x) => {
+      if (typeof x !== "object" || x == null) return String(x);
+      const n = x.number ?? "";
+      const unit = castTimeUnitZh(x.unit);
+      const out = `${n} ${unit}`.trim();
+      // Preserve any condition text ({@condition triggered when ...})
+      // as a follow-on so e.g. reaction-on-trigger spells still read
+      // sensibly: "1 反应（当...）".
+      const cond = typeof x.condition === "string" ? stripTags(x.condition) : "";
+      return cond ? `${out}（${cond}）` : out;
+    })
     .join("，");
 }
+// 2026-05-16 — distance / shape unit translation. 5etools uses
+// `distance.type` = "self" / "touch" / "feet" / "miles" /
+// "unlimited" / "sight" and `range.type` = "point" / "radius" /
+// "cone" / "line" / "sphere" / "cube" etc. Localize both so spells
+// show "60 尺 锥形" instead of "60 feet cone".
+const DISTANCE_UNIT_ZH: Record<string, string> = {
+  feet: "尺", foot: "尺",
+  miles: "英里", mile: "英里",
+  unlimited: "无限", sight: "视野范围",
+};
+const RANGE_SHAPE_ZH: Record<string, string> = {
+  radius: "半径", cone: "锥形", line: "线状",
+  sphere: "球状", cube: "立方", hemisphere: "半球",
+  cylinder: "圆柱",
+};
 function rangeStr(r: any): string {
   if (!r) return "";
   if (typeof r === "string") return r;
-  if (r.type === "point" && r.distance) {
-    const d = r.distance;
+  const d = r.distance;
+  if (r.type === "point" && d) {
     if (d.type === "self") return "自身";
     if (d.type === "touch") return "触及";
-    return `${d.amount ?? ""} ${d.type ?? ""}`.trim();
+    const unit = DISTANCE_UNIT_ZH[String(d.type ?? "").toLowerCase()] ?? d.type ?? "";
+    return `${d.amount ?? ""} ${unit}`.trim();
   }
-  return r.type ?? "";
+  // Shape-based range (radius / cone / line / etc.) — append the
+  // distance afterwards so "60 ft cone" → "60 尺 锥形".
+  const shape = RANGE_SHAPE_ZH[String(r.type ?? "").toLowerCase()] ?? r.type ?? "";
+  if (shape && d) {
+    const unit = DISTANCE_UNIT_ZH[String(d.type ?? "").toLowerCase()] ?? d.type ?? "";
+    const dist = `${d.amount ?? ""} ${unit}`.trim();
+    return dist ? `${dist} ${shape}` : shape;
+  }
+  return shape || "";
 }
 function componentsStr(c: any): string {
   if (!c) return "";
@@ -1427,16 +1481,46 @@ function componentsStr(c: any): string {
   }
   return parts.join(", ");
 }
+// 2026-05-16 — duration-unit translation. 5etools sends raw English
+// units inside `duration.type` ("minute" / "hour" / "day" / "round").
+// Without this map the duration chip on Chinese cards read "10 minute"
+// instead of "10 分钟". Falls back to the raw unit when not mapped.
+const DURATION_UNIT_ZH: Record<string, string> = {
+  round: "回合", rounds: "回合",
+  minute: "分钟", minutes: "分钟",
+  hour: "小时", hours: "小时",
+  day: "天", days: "天",
+  week: "周", weeks: "周",
+  month: "月", months: "月",
+  year: "年", years: "年",
+};
+function durationUnitZh(u: unknown): string {
+  if (typeof u !== "string") return "";
+  return DURATION_UNIT_ZH[u.toLowerCase()] ?? u;
+}
 function durationStr(d: any): string {
   if (!Array.isArray(d) || !d.length) return "";
   const x = d[0];
   if (typeof x === "string") return x;
   if (x.type === "instant") return "瞬发";
   if (x.type === "permanent") return "永久";
-  if (x.type === "timed" && x.duration)
-    return `${x.duration.amount ?? ""} ${x.duration.type ?? ""}`.trim();
-  if (x.concentration)
-    return `专注 ${x.duration?.amount ?? ""} ${x.duration?.type ?? ""}`.trim();
+  if (x.type === "special") return "特殊";
+  // 2026-05-16 — concentration spells from 5etools come through as
+  // `{ type: "timed", duration: {...}, concentration: true }`. The
+  // old code matched `type === "timed"` first and returned without
+  // ever checking `concentration`, so "专注" never appeared on any
+  // spell using the standard 5e shape. Prefix it inline now.
+  if (x.type === "timed" && x.duration) {
+    const prefix = x.concentration ? "专注 " : "";
+    const amount = x.duration.amount ?? "";
+    const unit = durationUnitZh(x.duration.type);
+    return `${prefix}${amount} ${unit}`.trim();
+  }
+  if (x.concentration) {
+    const amount = x.duration?.amount ?? "";
+    const unit = durationUnitZh(x.duration?.type);
+    return `专注 ${amount} ${unit}`.trim();
+  }
   return x.type ?? "";
 }
 function prerequisiteStr(prereq: any): string {

@@ -84,6 +84,30 @@ const NON_RESIZABLE = new Set<string>([
   PANEL_IDS.search,
 ]);
 
+// 2026-05-16 — per-panel anchor origin (the screen-coord corner that
+// stays put when the panel resizes). The proxy's resize handle is at
+// its BOTTOM-RIGHT, so the proxy's top-left is the fixed point during
+// preview. If the panel's anchor doesn't also live at the top-left,
+// the panel will drift relative to the proxy after commit. We
+// compensate by adding a size-delta to the persisted offset whose
+// sign matches each non-top/non-left anchor edge.
+//
+// Mapping mirrors each module's `anchorOrigin` passed to
+// OBR.popover.open(). Anything not listed defaults to top-left (the
+// natural growth direction; matches the proxy's preview exactly).
+type AnchorH = "left" | "right";
+type AnchorV = "top" | "bottom";
+const PANEL_ANCHOR: Record<string, { h: AnchorH; v: AnchorV }> = {
+  [PANEL_IDS.ccInfo]:         { h: "right", v: "bottom" }, // characterCards/index.ts
+  [PANEL_IDS.bestiaryInfo]:   { h: "right", v: "top" },    // bestiary/index.ts
+  [PANEL_IDS.bestiaryPanel]:  { h: "right", v: "top" },    // bestiary/index.ts
+  [PANEL_IDS.diceHistory]:    { h: "right", v: "bottom" }, // dice/index.ts
+  [PANEL_IDS.perfWindow]:     { h: "left",  v: "top" },    // perfWindow/index.ts
+  [PANEL_IDS.statusPalette]:  { h: "left",  v: "top" },    // statusTracker/index.ts
+  [PANEL_IDS.hpBar]:          { h: "left",  v: "top" },    // hpBar/index.ts
+  [PANEL_IDS.portalEdit]:     { h: "left",  v: "top" },    // portals/index.ts (CENTER → treat as left)
+};
+
 // Min size for resizable panels — smaller than this and the panels
 // become unusable.
 const MIN_W = 160;
@@ -294,15 +318,40 @@ function buildProxy(
       } catch {}
     } else {
       // Resize commit. Persist new size + send drag-end with both
-      // the (unchanged) offset and the new size so the panel
-      // re-anchors and re-sizes in one go.
+      // the offset and the new size so the panel re-anchors and
+      // re-sizes in one go.
+      //
+      // 2026-05-16 — anchor-aware offset compensation. The proxy
+      // grows from its top-left (the resize handle is bottom-right,
+      // so the user sees top-left stay fixed during drag). But each
+      // panel has its OWN anchor edge that stays fixed at its open
+      // call's anchorPosition — e.g. cc-info anchors bottom-right,
+      // so when its size grows but offset doesn't change, its
+      // top-left moves UP-LEFT, ending up to the left of the proxy's
+      // preview top-left. We add a size-delta to the offset for each
+      // non-top / non-left anchor edge to keep the actual panel's
+      // proxy-equivalent corner where the user saw it.
       if (proxy.width === proxy.startWidth && proxy.height === proxy.startHeight) return;
       const newSize: PanelSize = { width: proxy.width, height: proxy.height };
+      const widthDelta = proxy.width - proxy.startWidth;
+      const heightDelta = proxy.height - proxy.startHeight;
+      const anchor = PANEL_ANCHOR[panelId] ?? { h: "left" as AnchorH, v: "top" as AnchorV };
+      const offsetAfterResize: PanelOffset = {
+        dx: proxy.startOffset.dx + (anchor.h === "right" ? widthDelta : 0),
+        dy: proxy.startOffset.dy + (anchor.v === "bottom" ? heightDelta : 0),
+      };
       setPanelSize(panelId, newSize);
+      // Only persist the new offset if we actually shifted it — keeps
+      // localStorage clean for top-left-anchored panels where resize
+      // doesn't move the persisted offset.
+      if (offsetAfterResize.dx !== proxy.startOffset.dx
+        || offsetAfterResize.dy !== proxy.startOffset.dy) {
+        setPanelOffset(panelId, offsetAfterResize);
+      }
       try {
         OBR.broadcast.sendMessage(
           BC_PANEL_DRAG_END,
-          { panelId, offset: proxy.startOffset, size: newSize },
+          { panelId, offset: offsetAfterResize, size: newSize },
           { destination: "LOCAL" },
         );
       } catch {}
