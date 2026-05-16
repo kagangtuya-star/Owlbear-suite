@@ -81,16 +81,32 @@ async function getFfmpeg() {
 export async function encodeWebm(pngFrames, fps, onProgress) {
   if (pngFrames.length === 0) throw new Error("no frames");
   const { ffmpeg } = await getFfmpeg();
+  // 2026-05-16 — flash "ffmpeg 就绪" the moment we have a usable instance
+  // (AFTER getFfmpeg resolves; before would be a lie if the load was
+  // actually hung) so the caller's "加载 ffmpeg.wasm…" label doesn't
+  // stay glued on the screen during the writeFile loop. The user
+  // reported gifs appearing to hang at that step — turns out a GIF's
+  // PNG frames are 20-100× bigger than emoji's mostly-transparent
+  // ones, so writeFile per call takes 10× longer and the old
+  // every-12-frames progress made the next 12 writes look like
+  // "no progress at all".
+  if (onProgress) onProgress(0.04, "ffmpeg 就绪，开始写入帧");
   const written = [];
 
   try {
     // Write each frame as f00001.png, f00002.png, … for ffmpeg's
     // image2 demuxer (`-i f%05d.png`).
+    // 2026-05-16 — progress fires on every frame (was every 12). For
+    // GIF-sourced bakes a single frame's PNG can be hundreds of KB and
+    // a single writeFile can take 50-300 ms, so the old gating made
+    // the progress bar appear frozen for 10+ seconds. Every-frame
+    // updates are cheap (text update + width set) and keep the bar
+    // visibly moving.
     for (let i = 0; i < pngFrames.length; i++) {
       const name = `f${String(i + 1).padStart(5, "0")}.png`;
       await ffmpeg.writeFile(name, pngFrames[i]);
       written.push(name);
-      if (onProgress && i % 12 === 0) {
+      if (onProgress) {
         onProgress(0.05 + (i / pngFrames.length) * 0.12, `写入帧 ${i + 1}/${pngFrames.length}`);
       }
     }

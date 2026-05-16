@@ -1772,7 +1772,34 @@ function InventorySection({ data }: { data: CharacterData }) {
   const inv = data.inventory || {};
   const w = inv.currency?.wallet || {};
   const enc = inv.encumbrance || {};
-  const items: any[] = Array.isArray(inv.items) ? inv.items : [];
+  // 2026-05-16 — the parser puts the 4 "背包 1-4" + 2 "次元袋 1-2"
+  // backpack regions into `inv.containers`, NOT `inv.items` (the latter
+  // is always hardcoded to []). User reported "导入时并没有真的识别到
+  // 背包工作表的内容" — the panel was rendering the empty items list,
+  // ignoring the real container data. Flatten containers into a single
+  // displayable list, tagging each entry with its container label so
+  // the source 背包 1 / 次元袋 2 / etc. is visible.
+  const rawItems: any[] = Array.isArray(inv.items) ? inv.items : [];
+  const containers: any[] = Array.isArray(inv.containers) ? inv.containers : [];
+  const containerItems: any[] = containers.flatMap((c: any) => {
+    const label = String(c?.label ?? "背包");
+    return Array.isArray(c?.items)
+      ? c.items.map((it: any) => ({
+          name: it?.name ?? "",
+          weight: it?.weight ?? null,
+          location: label,
+          description: it?.description ?? "",
+          quantity: it?.quantity ?? null,
+        }))
+      : [];
+  });
+  // Merge: rawItems first (legacy / hand-edited extras), then container
+  // items. In EDIT mode only show rawItems so the index-based update /
+  // remove handlers stay consistent — container items are sourced
+  // from the xlsx and treated as read-only here (the user re-imports
+  // the spreadsheet to change them). In VIEW mode merge both so the
+  // user can actually see what's in their pack.
+  const items: any[] = editing ? rawItems : [...rawItems, ...containerItems];
   // Wondrous items (奇物) — new schema field, ships when present.
   const wondrous: any[] = Array.isArray(inv.wondrous_items) ? inv.wondrous_items : [];
 
@@ -1905,12 +1932,22 @@ function InventorySection({ data }: { data: CharacterData }) {
                   </div>
                 );
               }
+              // 2026-05-16 — show quantity (from container schema) +
+              // weight + container label. The quantity is the xlsx
+              // 容器 schema's qty cell; we render it inline with the
+              // name as "× N" so each row's count is immediately
+              // visible.
+              const qty = it.quantity != null && it.quantity !== 1 ? ` × ${it.quantity}` : "";
+              const weightStr = it.weight != null && it.weight !== ""
+                ? `${it.weight} 磅` : "";
+              const loc = it.location ? `· ${it.location}` : "";
+              const meta = [weightStr, loc].filter(Boolean).join(" ");
               return (
                 <div class="weap">
-                  <div class="weap-name">{it.name || "?"}</div>
+                  <div class="weap-name">{(it.name || "?") + qty}</div>
                   <div class="weap-atk" style={{ visibility: "hidden" }}>—</div>
                   <div class="weap-dmg" style={{ background: "transparent", border: "0", color: "var(--ink-dim)" }}>
-                    {it.weight != null ? `${it.weight} 磅` : ""} {it.location ? `· ${it.location}` : ""}
+                    {meta}
                   </div>
                   {it.description && <div class="weap-props">{it.description}</div>}
                 </div>

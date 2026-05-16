@@ -866,12 +866,20 @@ generateBtn.addEventListener("click", async () => {
       // swallow a buffer that big ("memory access out of bounds").
       // PNG-compressed frames keep ffmpeg's wasm FS small.
       frames.push(pngDataUrlToBytes(off.toDataURL("image/png")));
-      if (f % 6 === 0) {
-        const r = (f / totalFrames) * 0.25;
+      // 2026-05-16 — progress every 3 frames (was every 6) AND yield
+      // every frame. GIF-sourced bakes draw real pixels (vs emoji's
+      // mostly-transparent canvas) so toDataURL can be 30-100 ms per
+      // frame; the old gating made the bar look frozen for 200+ ms
+      // chunks. Per-frame setTimeout(0) gives the browser more pump
+      // cycles for the actual paint.
+      const r = (f / totalFrames) * 0.25;
+      if (f % 3 === 0) {
         progressFill.style.width = (r * 100).toFixed(1) + "%";
         progressText.textContent = `烘焙帧 ${f + 1}/${totalFrames}`;
-        await new Promise((res) => setTimeout(res, 0));
       }
+      // Yield every frame so the progress text update lands and the
+      // UI doesn't lock up on long bakes.
+      await new Promise((res) => setTimeout(res, 0));
     }
     progressText.textContent = "加载 ffmpeg.wasm…";
     const blob = await encodeWebm(frames, fps, (ratio, msg) => {
