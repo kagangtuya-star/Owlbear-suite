@@ -801,28 +801,69 @@ function logErr(prefix: string, e: unknown): void {
 // cache key in index.ts prevents this from running on every viewport
 // tick — only when SOMETHING actually changed for this token.
 
+// 2026-05-18 — per-token cache of the buff-item ids we created last
+// time syncTokenBuffs ran. Replaces the two `OBR.scene.items.getItems`
+// + `OBR.scene.local.getItems` calls that previously ran on EVERY buff
+// add. The cache stays in sync because the GM client is the only
+// writer (syncTokenBuffs only runs on GM); other clients see the
+// buffs via attachment-inherit without writing.
+// User report: "添加buff的延迟很严重"; killing those 2 OBR round-trips
+// roughly halves the per-buff latency.
+//
+// Cache invalidates on any deleteItems / addItems error → next sync
+// falls back to the full GET path. exported so syncForToken-side
+// flows (particle module, sweep) can drop entries when they delete
+// their own items.
+const tokenItemCache = new Map<string, string[]>();
+const tokenLocalCache = new Map<string, string[]>();
+
+/** Drop the cache for a token. Called on sweep / forced rebuild paths. */
+export function invalidateTokenBuffCache(tokenId: string): void {
+  tokenItemCache.delete(tokenId);
+  tokenLocalCache.delete(tokenId);
+}
+/** Drop ALL caches. Used on scene change / palette deactivate. */
+export function invalidateAllBuffCaches(): void {
+  tokenItemCache.clear();
+  tokenLocalCache.clear();
+}
+
 export async function syncTokenBuffs(token: Image, buffs: BuffDef[]): Promise<void> {
   let sceneDpi = 150;
   try { sceneDpi = await OBR.scene.grid.getDpi(); } catch {}
   const desc = describe(token, buffs, sceneDpi);
 
-  let existingIds: string[] = [];
-  try {
-    const ex = await OBR.scene.items.getItems((it) =>
-      (it.metadata?.[OWNER_KEY] as string) === token.id &&
-      (it.metadata?.[ROLE_KEY] as string) !== "particle",
-    );
-    existingIds = ex.map((it) => it.id);
-  } catch (e) { logErr(`scene.items.getItems(token=${token.id}) failed`, e); }
-
-  let staleLocalIds: string[] = [];
-  try {
-    const ex = await OBR.scene.local.getItems((it) =>
-      (it.metadata?.[OWNER_KEY] as string) === token.id &&
-      (it.metadata?.[ROLE_KEY] as string) !== "particle",
-    );
-    staleLocalIds = ex.map((it) => it.id);
-  } catch {}
+  // 2026-05-18 — read existing item ids from our in-memory cache
+  // first. On cache miss (first sync for this token, or after an
+  // invalidation), fall back to a one-time scene query and seed the
+  // cache. Subsequent calls skip the OBR round-trip entirely.
+  let existingIds = tokenItemCache.get(token.id);
+  if (existingIds === undefined) {
+    try {
+      const ex = await OBR.scene.items.getItems((it) =>
+        (it.metadata?.[OWNER_KEY] as string) === token.id &&
+        (it.metadata?.[ROLE_KEY] as string) !== "particle",
+      );
+      existingIds = ex.map((it) => it.id);
+    } catch (e) {
+      logErr(`scene.items.getItems(token=${token.id}) failed`, e);
+      existingIds = [];
+    }
+    tokenItemCache.set(token.id, existingIds);
+  }
+  let staleLocalIds = tokenLocalCache.get(token.id);
+  if (staleLocalIds === undefined) {
+    try {
+      const ex = await OBR.scene.local.getItems((it) =>
+        (it.metadata?.[OWNER_KEY] as string) === token.id &&
+        (it.metadata?.[ROLE_KEY] as string) !== "particle",
+      );
+      staleLocalIds = ex.map((it) => it.id);
+    } catch {
+      staleLocalIds = [];
+    }
+    tokenLocalCache.set(token.id, staleLocalIds);
+  }
 
   const items: Item[] = [];
   for (const d of desc.bgs)    items.push(buildBgItem(token, d));
@@ -831,15 +872,32 @@ export async function syncTokenBuffs(token: Image, buffs: BuffDef[]): Promise<vo
 
   if (existingIds.length > 0) {
     try { await OBR.scene.items.deleteItems(existingIds); }
-    catch (e) { logErr(`scene.items.deleteItems(token=${token.id}) failed`, e); }
+    catch (e) {
+      logErr(`scene.items.deleteItems(token=${token.id}) failed`, e);
+      invalidateTokenBuffCache(token.id); // cache may be stale
+    }
   }
   if (staleLocalIds.length > 0) {
-    try { await OBR.scene.local.deleteItems(staleLocalIds); } catch {}
+    try { await OBR.scene.local.deleteItems(staleLocalIds); }
+    catch { invalidateTokenBuffCache(token.id); }
   }
   if (items.length > 0) {
-    try { await OBR.scene.items.addItems(items); }
-    catch (e) { logErr(`addItems(token=${token.id}) failed`, e); }
+    try {
+      await OBR.scene.items.addItems(items);
+      // Update cache with the new ids we just added (scene items only;
+      // local items get tracked separately below in particles.syncForToken).
+      tokenItemCache.set(token.id, items.map((i) => (i as Item).id));
+    } catch (e) {
+      logErr(`addItems(token=${token.id}) failed`, e);
+      invalidateTokenBuffCache(token.id);
+    }
+  } else {
+    tokenItemCache.set(token.id, []);
   }
+  // After deletes the local cache is empty until particles repopulate;
+  // particle items aren't tracked here (different ROLE_KEY filter), so
+  // local cache reset to [] is correct for our owned items.
+  tokenLocalCache.set(token.id, []);
 
   await particles.syncForToken(token.id, desc.effectBuffs, {
     cx: desc.cx, cy: desc.cy,

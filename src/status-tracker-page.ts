@@ -83,6 +83,46 @@ const previewLabelEl = document.getElementById("bp-label") as HTMLDivElement | n
 let _previewHideTimer: number | null = null;
 let _previewActiveId: string | null = null;
 
+// 2026-05-18 — warm browser cache for buff webms so the first hover
+// has frame 0 ready instead of fetching cold. Called once after
+// catalog loads; the fetch is fire-and-forget and uses `force-cache`
+// so subsequent <video src> creations resolve from cache instantly.
+//
+// Also reuses a SHARED <video> element pool keyed by webm URL —
+// reusing the same element across re-hovers avoids creating a fresh
+// HTMLMediaElement (which involves codec setup) every time and keeps
+// the first-hover "blank video" symptom from recurring.
+const prewarmedWebms = new Set<string>();
+const previewVideoCache = new Map<string, HTMLVideoElement>();
+function prewarmBuffPreviews(): void {
+  for (const b of buffs) {
+    const buffAny = b as any;
+    if (typeof buffAny.webmAsset !== "string" || !buffAny.webmAsset) continue;
+    if (prewarmedWebms.has(buffAny.webmAsset)) continue;
+    prewarmedWebms.add(buffAny.webmAsset);
+    const url = `${location.origin}${import.meta.env.BASE_URL}${buffAny.webmAsset}`;
+    // fire-and-forget HEAD-equivalent (full GET is fine; webms are ~50KB).
+    // `cache: 'force-cache'` so subsequent <video src> picks up the
+    // cached response without a second download.
+    fetch(url, { cache: "force-cache" }).catch(() => {});
+  }
+}
+function getPreviewVideo(url: string): HTMLVideoElement {
+  let v = previewVideoCache.get(url);
+  if (v) return v;
+  v = document.createElement("video");
+  v.src = url;
+  v.loop = true;
+  v.muted = true;
+  v.playsInline = true;
+  v.preload = "auto";
+  v.setAttribute("aria-hidden", "true");
+  // Hold the element off-DOM but loaded — first time it gets attached
+  // for hover preview, frame 0 is already decoded.
+  previewVideoCache.set(url, v);
+  return v;
+}
+
 function showBuffPreview(buffId: string): void {
   if (!previewEl || !previewMediaEl || !previewLabelEl) return;
   if (_previewHideTimer != null) {
@@ -92,25 +132,32 @@ function showBuffPreview(buffId: string): void {
   if (_previewActiveId === buffId) return; // already showing
   const b = buffs.find((x) => x.id === buffId);
   if (!b) return;
-  _previewActiveId = buffId;
   const buffAny = b as any;
   const webm = typeof buffAny.webmAsset === "string" && buffAny.webmAsset ? buffAny.webmAsset : "";
   const icon = typeof buffAny.iconAsset === "string" && buffAny.iconAsset ? buffAny.iconAsset : "";
-  // Build a fresh media element each time so the <video> starts
-  // playing from frame 0 (otherwise a returning hover would resume
-  // mid-loop). Setting innerHTML to "" first releases the previous
-  // <video>'s decoder so the browser doesn't accumulate decoders.
+  // 2026-05-18 — text-only buffs (no webm AND no icon) skip the
+  // preview pane entirely per user request. The pane would just
+  // show a colour swatch + name, which the buff button already
+  // conveys; popping a pane for those just adds noise.
+  if (!webm && !icon) {
+    hideBuffPreviewDeferred();
+    return;
+  }
+  _previewActiveId = buffId;
+  // Re-use a long-lived <video> per URL (created on first hover,
+  // kept in previewVideoCache) so the codec doesn't reinit each
+  // hover. Detach from previous mount + clear previous content,
+  // then attach the cached element.
   previewMediaEl.innerHTML = "";
   if (webm) {
     const url = `${location.origin}${import.meta.env.BASE_URL}${webm}`;
-    const v = document.createElement("video");
-    v.src = url;
-    v.autoplay = true;
-    v.loop = true;
-    v.muted = true;
-    v.playsInline = true;
-    v.setAttribute("aria-hidden", "true");
+    const v = getPreviewVideo(url);
+    v.currentTime = 0;
     previewMediaEl.appendChild(v);
+    // Explicit play(). Browser autoplay policy allows muted video; the
+    // promise can still reject if the document hasn't fully loaded —
+    // a no-op .catch keeps it silent.
+    void v.play().catch(() => {});
   } else if (icon) {
     const img = document.createElement("img");
     img.src = icon;
@@ -118,22 +165,10 @@ function showBuffPreview(buffId: string): void {
     img.loading = "lazy";
     img.decoding = "async";
     previewMediaEl.appendChild(img);
-  } else {
-    // No visual asset — synthesise a small swatch of the buff's
-    // colour so the pane still has SOMETHING to look at, with a
-    // 文字-only hint label.
-    const swatch = document.createElement("div");
-    swatch.style.width = "100%";
-    swatch.style.height = "100%";
-    swatch.style.background = b.color;
-    swatch.style.borderRadius = "4px";
-    previewMediaEl.appendChild(swatch);
   }
   previewLabelEl.innerHTML =
     `<span class="bp-name">${escapeHtml(b.name)}</span>` +
-    (webm || icon
-      ? `<span class="bp-hint">${b.group ? escapeHtml(b.group) + " · " : ""}悬停预览效果</span>`
-      : `<span class="bp-hint">${b.group ? escapeHtml(b.group) + " · " : ""}纯文字 buff</span>`);
+    `<span class="bp-hint">${b.group ? escapeHtml(b.group) + " · " : ""}悬停预览效果</span>`;
   previewEl.classList.add("is-active");
 }
 
@@ -146,12 +181,23 @@ function hideBuffPreviewDeferred(): void {
     _previewHideTimer = null;
     _previewActiveId = null;
     previewEl.classList.remove("is-active");
-    // Release decoder + GPU video texture after the close animation.
+    // 2026-05-18 — DON'T tear down the <video> element. Removing it
+    // from DOM resets the decoder state; on next hover the user
+    // would see the "blank-then-loads" flicker again. Pause the
+    // active video instead — keeps decoder warm for instant
+    // re-attach. Detaching from DOM doesn't pause modern browsers'
+    // <video> elements; calling .pause() explicitly stops the
+    // decode loop while preserving the loaded buffer.
     setTimeout(() => {
       if (!previewEl.classList.contains("is-active") && previewMediaEl) {
-        previewMediaEl.innerHTML = "";
+        const v = previewMediaEl.querySelector("video");
+        if (v) v.pause();
+        // The <video> stays in the cache (previewVideoCache); just
+        // detach from the mount so the next show can re-attach to
+        // either the same or a different cached video.
+        while (previewMediaEl.firstChild) previewMediaEl.removeChild(previewMediaEl.firstChild);
       }
-    }, 200);
+    }, 220);
   }, 180);
 }
 
@@ -233,7 +279,13 @@ const LS_BUFF_CATALOG = "obr-suite/status/buff-catalog";
 // 12 defaults use `u_*` prefixed ids so they don't collide with any
 // retired id; user-created buffs that happen to use a colliding id
 // (rare) need to be re-added under a different id.
-const DEFAULTS_MIGRATION_VERSION = 4;
+// v5: force-refresh u_* entries from DEFAULT_BUFFS. v4 catalogs had
+// the new 12 defaults appended WITHOUT the webmIntrinsicW/H fields
+// I added afterwards, so bubbles.ts fell back to the 192 default
+// against the 256×256 actual files and the buff rendered drifting
+// bottom-right. The u_* id prefix is reserved for built-in defaults
+// so blanket-replacing them won't clobber user-created buffs.
+const DEFAULTS_MIGRATION_VERSION = 5;
 const LS_DEFAULTS_VERSION = "obr-suite/status/defaults-version";
 
 /**
@@ -260,8 +312,22 @@ function migrateDefaultsInPlace(
   void matchesOldDefault;
   // Pass 1: drop every retired-default id.
   const kept = existing.filter((b) => !DEFAULT_BUFF_RETIRED_IDS.has(b.id));
-  // Pass 2: append new defaults that aren't already there (by id).
+  // Pass 2: append new defaults that aren't already there (by id) AND
+  // force-refresh any u_* entry already in the catalog from the
+  // latest DEFAULT_BUFFS shape. The u_* prefix is reserved for
+  // built-in defaults — user-created buffs use other id schemes — so
+  // overwriting them with the freshest defaults is safe and lets us
+  // ship a schema change (e.g. adding webmIntrinsicW) without users
+  // needing to manually re-add every default.
+  const defaultIds = new Set(DEFAULT_BUFFS.map((d) => d.id));
   const existingIds = new Set(kept.map((b) => b.id));
+  for (let i = 0; i < kept.length; i++) {
+    const b = kept[i];
+    if (b.id.startsWith("u_") && defaultIds.has(b.id)) {
+      const fresh = DEFAULT_BUFFS.find((d) => d.id === b.id);
+      if (fresh) kept[i] = { ...fresh };
+    }
+  }
   for (const def of DEFAULT_BUFFS) {
     if (!existingIds.has(def.id)) {
       kept.push({ ...def });
@@ -344,6 +410,10 @@ async function loadCatalog(): Promise<void> {
   }
   buffs = loaded.buffs;
   groupOrder = loaded.groupOrder;
+  // 2026-05-18 — warm the browser cache for every buff's webm so the
+  // first hover-preview opens with frame 0 ready (instead of a 200-
+  // 800 ms blank while the file fetches + decodes). Fire-and-forget.
+  prewarmBuffPreviews();
   if (!popupBuffId) render();
 }
 
