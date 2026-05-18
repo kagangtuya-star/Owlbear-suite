@@ -74,6 +74,86 @@ const gridEl = document.getElementById("grid") as HTMLDivElement;
 const popupEl = document.getElementById("popup") as HTMLDivElement;
 const footEl = document.getElementById("foot") as HTMLDivElement;
 const cardEl = document.getElementById("card") as HTMLDivElement;
+// 2026-05-18 — hover-preview pane refs. Optional in markup; checks
+// below null-guard so old cached status-tracker.html still loads.
+const previewEl = document.getElementById("buff-preview") as HTMLDivElement | null;
+const previewMediaEl = document.getElementById("bp-media") as HTMLDivElement | null;
+const previewLabelEl = document.getElementById("bp-label") as HTMLDivElement | null;
+
+let _previewHideTimer: number | null = null;
+let _previewActiveId: string | null = null;
+
+function showBuffPreview(buffId: string): void {
+  if (!previewEl || !previewMediaEl || !previewLabelEl) return;
+  if (_previewHideTimer != null) {
+    window.clearTimeout(_previewHideTimer);
+    _previewHideTimer = null;
+  }
+  if (_previewActiveId === buffId) return; // already showing
+  const b = buffs.find((x) => x.id === buffId);
+  if (!b) return;
+  _previewActiveId = buffId;
+  const buffAny = b as any;
+  const webm = typeof buffAny.webmAsset === "string" && buffAny.webmAsset ? buffAny.webmAsset : "";
+  const icon = typeof buffAny.iconAsset === "string" && buffAny.iconAsset ? buffAny.iconAsset : "";
+  // Build a fresh media element each time so the <video> starts
+  // playing from frame 0 (otherwise a returning hover would resume
+  // mid-loop). Setting innerHTML to "" first releases the previous
+  // <video>'s decoder so the browser doesn't accumulate decoders.
+  previewMediaEl.innerHTML = "";
+  if (webm) {
+    const url = `${location.origin}${import.meta.env.BASE_URL}${webm}`;
+    const v = document.createElement("video");
+    v.src = url;
+    v.autoplay = true;
+    v.loop = true;
+    v.muted = true;
+    v.playsInline = true;
+    v.setAttribute("aria-hidden", "true");
+    previewMediaEl.appendChild(v);
+  } else if (icon) {
+    const img = document.createElement("img");
+    img.src = icon;
+    img.alt = "";
+    img.loading = "lazy";
+    img.decoding = "async";
+    previewMediaEl.appendChild(img);
+  } else {
+    // No visual asset — synthesise a small swatch of the buff's
+    // colour so the pane still has SOMETHING to look at, with a
+    // 文字-only hint label.
+    const swatch = document.createElement("div");
+    swatch.style.width = "100%";
+    swatch.style.height = "100%";
+    swatch.style.background = b.color;
+    swatch.style.borderRadius = "4px";
+    previewMediaEl.appendChild(swatch);
+  }
+  previewLabelEl.innerHTML =
+    `<span class="bp-name">${escapeHtml(b.name)}</span>` +
+    (webm || icon
+      ? `<span class="bp-hint">${b.group ? escapeHtml(b.group) + " · " : ""}悬停预览效果</span>`
+      : `<span class="bp-hint">${b.group ? escapeHtml(b.group) + " · " : ""}纯文字 buff</span>`);
+  previewEl.classList.add("is-active");
+}
+
+function hideBuffPreviewDeferred(): void {
+  if (!previewEl) return;
+  if (_previewHideTimer != null) window.clearTimeout(_previewHideTimer);
+  // 180 ms grace so sweeping the cursor between adjacent pills
+  // doesn't flicker the pane closed-then-open.
+  _previewHideTimer = window.setTimeout(() => {
+    _previewHideTimer = null;
+    _previewActiveId = null;
+    previewEl.classList.remove("is-active");
+    // Release decoder + GPU video texture after the close animation.
+    setTimeout(() => {
+      if (!previewEl.classList.contains("is-active") && previewMediaEl) {
+        previewMediaEl.innerHTML = "";
+      }
+    }, 200);
+  }, 180);
+}
 
 interface CatalogFile {
   version: 2;
@@ -326,6 +406,18 @@ function parseBuffArray(arr: any[]): BuffDef[] {
     const ws = (e as any).webmScale;
     if (typeof ws === "number" && Number.isFinite(ws) && ws > 0) {
       (def as any).webmScale = ws;
+    }
+    // 2026-05-18 — preserve per-buff intrinsic webm dims. These tell
+    // bubbles.ts how to anchor + scale the webm on a token; without
+    // them OBR's offset interpretation uses the file's real pixels
+    // which can drift off-centre when our default 192 doesn't match.
+    const iw = (e as any).webmIntrinsicW;
+    if (typeof iw === "number" && Number.isFinite(iw) && iw > 0) {
+      (def as any).webmIntrinsicW = iw;
+    }
+    const ih = (e as any).webmIntrinsicH;
+    if (typeof ih === "number" && Number.isFinite(ih) && ih > 0) {
+      (def as any).webmIntrinsicH = ih;
     }
     // 2026-05-18 — preserve rotation across save/load. Set by the
     // "以此创建状态" flow when the source token was pre-rotated.
@@ -941,26 +1033,13 @@ function renderGrid(): void {
     // key, etc.) which we'll revisit separately.
     const dragAttr = editMode ? `draggable="true"` : "";
     const cls = editMode ? "bubble editable" : "bubble";
-    // 2026-05-14 (#2) — "以此创建状态" buffs carry a static `iconAsset`
-    // image. Show it as a small thumbnail in the palette pill so the
-    // user sees the actual icon, not just the name text.
-    // 2026-05-18 — also show the WebM as a tiny inline preview when
-    // the buff has a `webmAsset`. <video> with autoplay+muted+loop
-    // gives users a glance at the actual effect before they apply it
-    // (instead of just the buff name). Same size as the icon
-    // thumbnail; falls through to the static icon for static-image
-    // buffs, then to no thumbnail for legacy text-only buffs.
-    const buffAny = b as any;
-    const webmUrl = typeof buffAny.webmAsset === "string" && buffAny.webmAsset
-      ? assetUrl(buffAny.webmAsset) : "";
-    const iconHtml = webmUrl
-      ? `<video src="${escapeHtml(webmUrl)}" autoplay loop muted playsinline preload="auto"
-                style="width:22px;height:22px;object-fit:contain;vertical-align:middle;margin-right:5px;border-radius:3px;pointer-events:none"
-                aria-hidden="true"></video>`
-      : buffAny.iconAsset
-      ? `<img src="${escapeHtml(buffAny.iconAsset)}" alt=""
-              style="width:22px;height:22px;object-fit:contain;vertical-align:middle;margin-right:5px;border-radius:3px">`
-      : "";
+    // 2026-05-18 — REVERTED the inline thumbnails (both <img> for
+    // iconAsset and <video> for webmAsset). The <video> element
+    // renders a solid BLACK fill until its first frame paints, which
+    // visibly broke the palette's transparent jelly tint. The user
+    // also asked for a HOVER preview pane at the bottom of the
+    // palette instead — see the #buff-preview rig wired below.
+    const iconHtml = "";
     // 2026-05-10: pass the buff colour through `--bubble-bg` so the
     // jelly CSS can apply 80%-alpha + a glassy highlight overlay.
     // Plain inline `background:` was opaque; color-mix in the
@@ -982,6 +1061,17 @@ function renderGrid(): void {
     if (el.id === "add-buff-pill") {
       el.addEventListener("click", () => { void onAddBuff(); });
       return;
+    }
+
+    // 2026-05-18 — hover-preview wiring (both apply + edit modes).
+    // pointerenter shows the buff's actual webm/icon in the
+    // #buff-preview pane below the grid; pointerleave hides it after
+    // a short delay so quickly sweeping the cursor across pills
+    // doesn't strobe the pane open/closed. Skipped for the
+    // synthetic eraser / manage pills (no buff to preview).
+    if (id !== "__clear__" && id !== "__manage__") {
+      el.addEventListener("pointerenter", () => showBuffPreview(id));
+      el.addEventListener("pointerleave", () => hideBuffPreviewDeferred());
     }
 
     if (!editMode) {

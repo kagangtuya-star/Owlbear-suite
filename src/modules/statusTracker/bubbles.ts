@@ -481,19 +481,31 @@ function describe(token: Image, buffs: BuffDef[], sceneDpi: number): TokenDescri
       ? b.rotation : 0;
     if (b.webmAsset && renderMode !== "text") {
       const buffScale = typeof b.webmScale === "number" && b.webmScale > 0 ? b.webmScale : 1.0;
+      // 2026-05-18 — per-buff intrinsic webm size. The user-curated
+      // batch ships at 256×256; the shipped buff-fx generator emits
+      // 192×192. OBR uses the FILE's real pixel dims (not our
+      // declared width/height) when interpreting the offset, so the
+      // intrinsic MUST match the file to keep the centre on target.
+      const intrinsicW = typeof b.webmIntrinsicW === "number" && b.webmIntrinsicW > 0
+        ? b.webmIntrinsicW : DEFAULT_WEBM_INTRINSIC_SIZE;
+      const intrinsicH = typeof b.webmIntrinsicH === "number" && b.webmIntrinsicH > 0
+        ? b.webmIntrinsicH : DEFAULT_WEBM_INTRINSIC_SIZE;
+      // Scale so the buff's LONGEST edge maps to baseFootprint × buffScale —
+      // keeps non-square webms (if any) within the token cell.
+      const longEdge = Math.max(intrinsicW, intrinsicH);
       const footprint = baseFootprint * buffScale;
-      const scale = footprint / DEFAULT_WEBM_INTRINSIC_SIZE;
+      const scale = footprint / longEdge;
       webms.push({
         buffId: b.id,
         url: assetUrl(b.webmAsset),
         // 2026-05-15 — centre-anchor positioning (was top-left). Pair
-        // with buildWebmItem's offset=(intrinsicSize/2, intrinsicSize/2)
+        // with buildWebmItem's offset=(intrinsicW/2, intrinsicH/2)
         // so OBR places the WebM's midpoint at this scene coord.
         centre: { x: cx, y: cy },
         scale,
-        intrinsicSize: DEFAULT_WEBM_INTRINSIC_SIZE,
-        intrinsicW: DEFAULT_WEBM_INTRINSIC_SIZE,
-        intrinsicH: DEFAULT_WEBM_INTRINSIC_SIZE,
+        intrinsicSize: longEdge,
+        intrinsicW,
+        intrinsicH,
         mime: "video/webm",
         sceneDpi,
         // SLOT_WEBM (200) is above SLOT_LABEL (100) so WebMs draw over

@@ -642,6 +642,57 @@ body.edit-mode .bubble.drop-after{
 .pop-del{color:var(--red);border-color:rgba(192,57,43,0.45)}
 .pop-del:hover{color:#fff;background:var(--red);border-color:var(--red)}
 
+/* 2026-05-18 — hover-preview pane. Sits between the buff grid and
+   the footer; shows the actual webm / icon at a glance when the user
+   hovers a buff pill. Collapsed (height:0) when no buff is hovered
+   so the palette stays compact. */
+.buff-preview{
+  flex-shrink:0;
+  overflow:hidden;
+  border-top:1px solid var(--border);
+  background:rgba(0,0,0,0.18);
+  /* 2026-05-18 — instant size transitions while the pane is
+     ARMED (.is-active); fade-only when it's DISARMING so the
+     content doesn't jump to height:0 mid-paint. */
+  max-height:0;
+  opacity:0;
+  transition:max-height 160ms ease, opacity 120ms ease;
+  display:flex;align-items:center;gap:10px;
+  padding:0 10px;
+}
+.buff-preview.is-active{
+  max-height:108px;
+  opacity:1;
+  padding:8px 10px;
+}
+.bp-media{
+  width:88px;height:88px;flex-shrink:0;
+  border-radius:6px;
+  /* Checkerboard so alpha buffs read clearly against either light
+     OR dark frames of the webm. */
+  background-image:
+    linear-gradient(45deg, rgba(255,255,255,0.07) 25%, transparent 25%),
+    linear-gradient(-45deg, rgba(255,255,255,0.07) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, rgba(255,255,255,0.07) 75%),
+    linear-gradient(-45deg, transparent 75%, rgba(255,255,255,0.07) 75%);
+  background-size:16px 16px;
+  background-position:0 0, 0 8px, 8px -8px, -8px 0;
+  display:flex;align-items:center;justify-content:center;
+  overflow:hidden;
+}
+.bp-media video,
+.bp-media img{
+  width:100%;height:100%;object-fit:contain;display:block;
+}
+.bp-label{
+  flex:1;min-width:0;
+  font-size:12px;color:var(--text);
+  line-height:1.4;
+  white-space:normal;
+}
+.bp-label .bp-name{font-weight:700;display:block;margin-bottom:2px}
+.bp-label .bp-hint{font-size:10px;color:var(--text-mute)}
+
 /* ====================================================================
    FOOTER — multi-line per feature so each affordance reads on its
    own row instead of being a long unwrapping run-on. */
@@ -732,6 +783,14 @@ body.edit-mode .bubble.drop-after{
   </div>
   <div class="filters" id="filters"></div>
   <div class="body" id="grid"></div>
+  <!-- 2026-05-18 — hover-preview pane. JS toggles `.is-active` when
+       the user hovers a buff pill; the inner <video> / <img> swaps
+       to the corresponding webmAsset / iconAsset. Hidden by default
+       so empty-buff palettes don't waste space. -->
+  <div class="buff-preview" id="buff-preview" aria-hidden="true">
+    <div class="bp-media" id="bp-media"></div>
+    <div class="bp-label" id="bp-label"></div>
+  </div>
   <div class="foot" id="foot">
     <div class="foot-line"><b>左键</b>拖到目标释放 = 应用 buff</div>
     <div class="foot-line"><b>右键</b>拖过角色 = 路径切换 (有则去)</div>

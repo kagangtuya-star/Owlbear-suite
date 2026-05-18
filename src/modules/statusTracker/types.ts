@@ -117,6 +117,16 @@ export interface BuffDef {
    *  effect so multiple stacked buffs don't visually fight each
    *  other. */
   webmScale?: number;
+  /** 2026-05-18 — actual intrinsic pixel dimensions of the webm file.
+   *  Used by bubbles.ts to set ImageContent.width / height AND
+   *  ImageGrid.offset = (intrinsicW/2, intrinsicH/2). OBR interprets
+   *  the offset against the FILE's real pixel dims (not our declared
+   *  width/height), so if we lie (e.g. declare 192 for a 256-px file)
+   *  the centre lands off-target and the buff drifts to the bottom-
+   *  right. Default 192 for the shipped fx; user-curated webms shipped
+   *  at /shared/buff-fx/*.webm carry their actual 256×256. */
+  webmIntrinsicW?: number;
+  webmIntrinsicH?: number;
   /** 2026-05-18 — rotation in degrees applied to the buff's rendered
    *  webm / icon item. Used by the "以此创建状态" flow to bake the
    *  source token's pre-rotated orientation into the resulting buff.
@@ -427,16 +437,21 @@ export function matchesOldDefault(buff: BuffDef): boolean {
 // as the user hasn't customised them; see DEFAULT_BUFF_RETIRED_IDS
 // + OLD_DEFAULT_SIGNATURES above.
 export const DEFAULT_BUFFS: BuffDef[] = [
-  { id: "u_paralyzed",   name: "麻痹 ⚡",      color: "#ffff00", group: "异常", webmAsset: "buff-fx/user-paralyzed.webm" },
-  { id: "u_stunned",     name: "眩晕 💫",      color: "#f5deb3", group: "异常", webmAsset: "buff-fx/user-stunned.webm" },
-  { id: "u_charmed",     name: "魅惑 💘",      color: "#ff00d0", group: "异常", webmAsset: "buff-fx/user-charmed.webm" },
-  { id: "u_invisible",   name: "隐形 👻",      color: "#cccccc", group: "增益", webmAsset: "buff-fx/user-invisible.webm" },
-  { id: "u_bardic",      name: "诗人激励 🎵",  color: "#7300ff", group: "增益", webmAsset: "buff-fx/user-bardic.webm" },
-  { id: "u_disadvantage",name: "劣势 ⬇",      color: "#3b82f6", group: "异常", webmAsset: "buff-fx/user-disadvantage.webm" },
-  { id: "u_advantage",   name: "优势 ⬆",      color: "#ffcc00", group: "增益", webmAsset: "buff-fx/user-advantage.webm" },
-  { id: "u_restrained",  name: "束缚 🔗",      color: "#8b4513", group: "异常", webmAsset: "buff-fx/user-restrained.webm" },
-  { id: "u_blessing",    name: "祝福 🧧",      color: "#ffff00", group: "增益", webmAsset: "buff-fx/user-blessing.webm" },
-  { id: "u_guidance",    name: "神导术 👍",    color: "#ffff00", group: "增益", webmAsset: "buff-fx/user-guidance.webm" },
-  { id: "u_hex",         name: "侵扰 😈",      color: "#7a1e9c", group: "异常", webmAsset: "buff-fx/user-hex.webm" },
-  { id: "u_focused",     name: "专注 🧠",      color: "#4682b4", group: "增益", webmAsset: "buff-fx/user-focused.webm" },
+  // The 12 user-curated webms ship at 256×256 (vs the 192×192 default
+  // the legacy buff-fx generator emitted), so each entry carries its
+  // own webmIntrinsicW/H — bubbles.ts uses these to set OBR's image
+  // offset to (intrinsicW/2, intrinsicH/2). Lying about file dims
+  // makes the buff render off-centre toward the bottom-right.
+  { id: "u_paralyzed",   name: "麻痹 ⚡",      color: "#ffff00", group: "异常", webmAsset: "buff-fx/user-paralyzed.webm",   webmIntrinsicW: 256, webmIntrinsicH: 256 },
+  { id: "u_stunned",     name: "眩晕 💫",      color: "#f5deb3", group: "异常", webmAsset: "buff-fx/user-stunned.webm",     webmIntrinsicW: 256, webmIntrinsicH: 256 },
+  { id: "u_charmed",     name: "魅惑 💘",      color: "#ff00d0", group: "异常", webmAsset: "buff-fx/user-charmed.webm",     webmIntrinsicW: 256, webmIntrinsicH: 256 },
+  { id: "u_invisible",   name: "隐形 👻",      color: "#cccccc", group: "增益", webmAsset: "buff-fx/user-invisible.webm",   webmIntrinsicW: 256, webmIntrinsicH: 256 },
+  { id: "u_bardic",      name: "诗人激励 🎵",  color: "#7300ff", group: "增益", webmAsset: "buff-fx/user-bardic.webm",      webmIntrinsicW: 256, webmIntrinsicH: 256 },
+  { id: "u_disadvantage",name: "劣势 ⬇",      color: "#3b82f6", group: "异常", webmAsset: "buff-fx/user-disadvantage.webm",webmIntrinsicW: 256, webmIntrinsicH: 256 },
+  { id: "u_advantage",   name: "优势 ⬆",      color: "#ffcc00", group: "增益", webmAsset: "buff-fx/user-advantage.webm",   webmIntrinsicW: 256, webmIntrinsicH: 256 },
+  { id: "u_restrained",  name: "束缚 🔗",      color: "#8b4513", group: "异常", webmAsset: "buff-fx/user-restrained.webm",  webmIntrinsicW: 256, webmIntrinsicH: 256 },
+  { id: "u_blessing",    name: "祝福 🧧",      color: "#ffff00", group: "增益", webmAsset: "buff-fx/user-blessing.webm",    webmIntrinsicW: 256, webmIntrinsicH: 256 },
+  { id: "u_guidance",    name: "神导术 👍",    color: "#ffff00", group: "增益", webmAsset: "buff-fx/user-guidance.webm",    webmIntrinsicW: 256, webmIntrinsicH: 256 },
+  { id: "u_hex",         name: "侵扰 😈",      color: "#7a1e9c", group: "异常", webmAsset: "buff-fx/user-hex.webm",         webmIntrinsicW: 256, webmIntrinsicH: 256 },
+  { id: "u_focused",     name: "专注 🧠",      color: "#4682b4", group: "增益", webmAsset: "buff-fx/user-focused.webm",     webmIntrinsicW: 256, webmIntrinsicH: 256 },
 ];
