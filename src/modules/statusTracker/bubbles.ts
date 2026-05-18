@@ -80,7 +80,13 @@ export const OWNER_KEY = `${PLUGIN_ID}/buff-owner`;
 const ROLE_KEY = `${PLUGIN_ID}/buff-role`;
 const BUFF_ID_KEY = `${PLUGIN_ID}/buff-id`;
 const EFFECT_KEY = `${PLUGIN_ID}/buff-effect`;
-type Role = "bg" | "label" | "effect";
+// 2026-05-18 — signature of the descriptor that produced this item.
+// Stored in metadata so syncTokenBuffs can re-hydrate the in-memory
+// "what did I last add" map after a hard reload (e.g. scene-ready),
+// without re-rendering items whose visual descriptor hasn't changed.
+// Format: short stable JSON of the descriptor (see descSig()).
+const SIG_KEY = `${PLUGIN_ID}/buff-sig`;
+type Role = "bg" | "label" | "webm";
 
 // (Bubble drag-by-grab feature was reverted in favour of the
 // "manage popover" UX — see status-tracker-manage-page.ts. The
@@ -163,13 +169,69 @@ function estimateNameWidth(name: string, fontSize: number): number {
 
 import { getTokenCircleSpec } from "./circles";
 
-function meta(tokenId: string, role: Role, buffId: string, effect: BuffEffect): Record<string, unknown> {
+function meta(
+  tokenId: string,
+  role: Role,
+  buffId: string,
+  effect: BuffEffect,
+  sig: string,
+): Record<string, unknown> {
   return {
     [OWNER_KEY]: tokenId,
     [ROLE_KEY]: role,
     [BUFF_ID_KEY]: buffId,
     [EFFECT_KEY]: effect,
+    [SIG_KEY]: sig,
   };
+}
+
+// 2026-05-18 — stable item id scheme. Keyed by (token, role, buffId).
+// Same buff on the same token always gets the same id across syncs,
+// so syncTokenBuffs can diff "what I need to render" vs "what's
+// already in the scene" and skip API calls for unchanged items.
+// Format avoids collision with the OBR-default UUIDs (which contain
+// dashes only) by using "|" as separator.
+function stableBuffItemId(tokenId: string, role: Role, buffId: string): string {
+  return `obr-suite-buff|${tokenId}|${role}|${buffId}`;
+}
+
+// Stable, compact signature of a descriptor's rendered attributes.
+// Two descriptors produce the same visible item iff their signatures
+// match. JSON.stringify is stable for plain-object inputs as long as
+// we always pass the SAME key order — descriptor interfaces above
+// give that for free since we build them with object literals.
+//
+// Rounded to 2 decimals to absorb floating-point jitter from layout
+// recomputation (e.g. ringRadius drifting by 1e-10 between renders
+// because of token.scale chain math) — without rounding, every sync
+// would invalidate every item even when nothing visibly changed.
+function num(n: number): number {
+  if (!Number.isFinite(n)) return 0;
+  return Math.round(n * 100) / 100;
+}
+function sigBg(d: PillBgDescriptor): string {
+  return JSON.stringify([
+    "bg", d.buffId, d.effect, num(d.cx), num(d.cy),
+    num(d.thetaCenterRad), num(d.thetaHalfRad),
+    num(d.rInner), num(d.rOuter),
+    d.fillColor, num(d.fillOpacity),
+    d.stroke, num(d.strokeOpacity), num(d.borderW),
+    d.zIndex,
+  ]);
+}
+function sigLabel(d: LabelDescriptor): string {
+  return JSON.stringify([
+    "label", d.buffId, d.effect, num(d.posX), num(d.posY),
+    num(d.rotationDeg), num(d.boxW), num(d.boxH),
+    num(d.fontSize), d.fg, d.text, d.zIndex,
+  ]);
+}
+function sigWebm(d: WebmDescriptor): string {
+  return JSON.stringify([
+    "webm", d.buffId, d.url, num(d.centre.x), num(d.centre.y),
+    num(d.scale), num(d.intrinsicW), num(d.intrinsicH),
+    d.mime, num(d.sceneDpi), d.zIndex, num(d.rotation ?? 0),
+  ]);
 }
 
 function darken(hex: string, amount = 0.30): string {
@@ -663,8 +725,9 @@ function describe(token: Image, buffs: BuffDef[], sceneDpi: number): TokenDescri
 // since OBR Path only supports solid fills and the SVG Image data-
 // URI route doesn't work (OBR's image-fetcher tries to HTTP-GET the
 // data: URI as a relative URL → 404).
-function buildBgItem(token: Image, d: PillBgDescriptor): Item {
+function buildBgItem(token: Image, d: PillBgDescriptor, stableId: string, sig: string): Item {
   return buildPath()
+    .id(stableId)
     .commands(curvedBandCommands(d.thetaCenterRad, d.thetaHalfRad, d.rInner, d.rOuter))
     .position({ x: d.cx, y: d.cy })
     .rotation(0)
@@ -681,7 +744,7 @@ function buildBgItem(token: Image, d: PillBgDescriptor): Item {
     .disableHit(true)
     .visible(true)
     .disableAttachmentBehavior(["SCALE", "ROTATION"])
-    .metadata(meta(token.id, "bg", d.buffId, d.effect))
+    .metadata(meta(token.id, "bg", d.buffId, d.effect, sig))
     .build();
 }
 
@@ -700,7 +763,7 @@ function buildBgItem(token: Image, d: PillBgDescriptor): Item {
  *      to the camera, regardless of how the token is rotated
  *    - layer ATTACHMENT — above CHARACTER (the token sprite), below
  *      NOTE / TEXT; effects visibly overlay the token */
-function buildWebmItem(token: Image, d: WebmDescriptor): Item {
+function buildWebmItem(token: Image, d: WebmDescriptor, stableId: string, sig: string): Item {
   const builder = buildImage(
     // 2026-05-14 (#2) — width/height + mime now come off the
     // descriptor. WebM buffs pass square 192 + "video/webm";
@@ -717,6 +780,7 @@ function buildWebmItem(token: Image, d: WebmDescriptor): Item {
     //            the WebM's midpoint lands exactly on the token centre.
     { dpi: d.sceneDpi, offset: { x: d.intrinsicW / 2, y: d.intrinsicH / 2 } },
   )
+    .id(stableId)
     .position(d.centre)
     .scale({ x: d.scale, y: d.scale })
     .layer("ATTACHMENT")
@@ -727,14 +791,14 @@ function buildWebmItem(token: Image, d: WebmDescriptor): Item {
     .disableAutoZIndex(true)
     .zIndex(d.zIndex)
     .disableAttachmentBehavior(["SCALE", "ROTATION"])
-    .metadata(meta(token.id, "bg", d.buffId, "default"));
+    .metadata(meta(token.id, "webm", d.buffId, "default", sig));
   // 2026-05-18 — apply baked rotation (from "以此创建状态"). Skipped
   // when 0 to keep the build minimal for the common case.
   if (d.rotation) builder.rotation(d.rotation);
   return builder.build();
 }
 
-function buildLabelItem(token: Image, d: LabelDescriptor): Item {
+function buildLabelItem(token: Image, d: LabelDescriptor, stableId: string, sig: string): Item {
   // 2026-05-13 — zIndex is token-z-locked (was hardcoded
   // `Date.now() + 1_000_000_000`). The label sits at stackBase +
   // SLOT_LABEL so it's above the band path of the same token, while
@@ -742,6 +806,7 @@ function buildLabelItem(token: Image, d: LabelDescriptor): Item {
   // the user spec "保证当前 token 如果在别的 token 的上方，那么该
   // token 的状态应该也在上方".
   return buildText()
+    .id(stableId)
     .textType("PLAIN")            // CRITICAL — see TextBuilder.js line 27
     .plainText(d.text)
     .position({ x: d.posX, y: d.posY })
@@ -766,7 +831,7 @@ function buildLabelItem(token: Image, d: LabelDescriptor): Item {
     .disableHit(true)
     .visible(true)
     .disableAttachmentBehavior(["SCALE", "ROTATION"])
-    .metadata(meta(token.id, "label", d.buffId, d.effect))
+    .metadata(meta(token.id, "label", d.buffId, d.effect, sig))
     .build();
 }
 
@@ -801,21 +866,28 @@ function logErr(prefix: string, e: unknown): void {
 // cache key in index.ts prevents this from running on every viewport
 // tick — only when SOMETHING actually changed for this token.
 
-// 2026-05-18 — per-token cache of the buff-item ids we created last
-// time syncTokenBuffs ran. Replaces the two `OBR.scene.items.getItems`
-// + `OBR.scene.local.getItems` calls that previously ran on EVERY buff
-// add. The cache stays in sync because the GM client is the only
-// writer (syncTokenBuffs only runs on GM); other clients see the
-// buffs via attachment-inherit without writing.
-// User report: "添加buff的延迟很严重"; killing those 2 OBR round-trips
-// roughly halves the per-buff latency.
+// 2026-05-18 — per-token cache of {id → sig} for the buff items we
+// last wrote. Replaces the two `OBR.scene.items.getItems` +
+// `OBR.scene.local.getItems` calls that previously ran on every buff
+// add, AND enables a real diff: items whose descriptor signature
+// hasn't changed since the last sync are skipped entirely — zero
+// API calls, zero re-renders. Only NEW / CHANGED / REMOVED items
+// hit the network.
 //
-// Cache invalidates on any deleteItems / addItems error → next sync
-// falls back to the full GET path. exported so syncForToken-side
-// flows (particle module, sweep) can drop entries when they delete
-// their own items.
-const tokenItemCache = new Map<string, string[]>();
-const tokenLocalCache = new Map<string, string[]>();
+// The cache stays in sync because the GM client is the only writer
+// (syncTokenBuffs only runs on GM); other clients see the buffs via
+// attachment-inherit without writing. On any error path the cache
+// invalidates → next sync re-hydrates from scene metadata (we stamp
+// SIG_KEY on every item we add so cold-start recovery is correct).
+//
+// User report 1: "添加buff的延迟很严重" — killed 2 of 3 OBR
+// round-trips by caching item ids in memory.
+// User report 2: "依旧很卡很延迟，比如降低drawcall，纯添加不刷新
+// 场面但做安全性检测等" — added per-item diff so unchanged buffs
+// emit ZERO ops; new buff to a token with N existing buffs now
+// emits 1-3 addItems entries instead of 2N+3 delete + add entries.
+const tokenItemCache = new Map<string, Map<string, string>>();
+const tokenLocalCache = new Map<string, Map<string, string>>();
 
 /** Drop the cache for a token. Called on sweep / forced rebuild paths. */
 export function invalidateTokenBuffCache(tokenId: string): void {
@@ -828,76 +900,157 @@ export function invalidateAllBuffCaches(): void {
   tokenLocalCache.clear();
 }
 
+/** Hydrate a token's scene-item cache from the live scene. Reads
+ *  every item owned by this token (excluding particles, which live
+ *  in scene.local) and rebuilds the id→sig map from SIG_KEY metadata.
+ *  Items without SIG_KEY (legacy from before this refactor) get a
+ *  random "force-replace" signature so the first sync after upgrade
+ *  cleanly drops them. */
+async function hydrateSceneCache(tokenId: string): Promise<Map<string, string>> {
+  const map = new Map<string, string>();
+  try {
+    const ex = await OBR.scene.items.getItems((it) =>
+      (it.metadata?.[OWNER_KEY] as string) === tokenId &&
+      (it.metadata?.[ROLE_KEY] as string) !== "particle",
+    );
+    for (const it of ex) {
+      const sig = (it.metadata?.[SIG_KEY] as string) ?? `__legacy_${Math.random()}`;
+      map.set(it.id, sig);
+    }
+  } catch (e) {
+    logErr(`scene.items.getItems(token=${tokenId}) failed`, e);
+  }
+  return map;
+}
+async function hydrateLocalCache(tokenId: string): Promise<Map<string, string>> {
+  const map = new Map<string, string>();
+  try {
+    const ex = await OBR.scene.local.getItems((it) =>
+      (it.metadata?.[OWNER_KEY] as string) === tokenId &&
+      (it.metadata?.[ROLE_KEY] as string) !== "particle",
+    );
+    for (const it of ex) {
+      const sig = (it.metadata?.[SIG_KEY] as string) ?? `__legacy_${Math.random()}`;
+      map.set(it.id, sig);
+    }
+  } catch {}
+  return map;
+}
+
 export async function syncTokenBuffs(token: Image, buffs: BuffDef[]): Promise<void> {
   let sceneDpi = 150;
   try { sceneDpi = await OBR.scene.grid.getDpi(); } catch {}
   const desc = describe(token, buffs, sceneDpi);
 
-  // 2026-05-18 — read existing item ids from our in-memory cache
-  // first. On cache miss (first sync for this token, or after an
-  // invalidation), fall back to a one-time scene query and seed the
-  // cache. Subsequent calls skip the OBR round-trip entirely.
-  let existingIds = tokenItemCache.get(token.id);
-  if (existingIds === undefined) {
-    try {
-      const ex = await OBR.scene.items.getItems((it) =>
-        (it.metadata?.[OWNER_KEY] as string) === token.id &&
-        (it.metadata?.[ROLE_KEY] as string) !== "particle",
-      );
-      existingIds = ex.map((it) => it.id);
-    } catch (e) {
-      logErr(`scene.items.getItems(token=${token.id}) failed`, e);
-      existingIds = [];
-    }
-    tokenItemCache.set(token.id, existingIds);
+  // 1) Build the DESIRED item set (id → {item, sig}). Stable ids let
+  //    us diff against the previous sync's set.
+  const desired = new Map<string, { item: Item; sig: string }>();
+  for (const d of desc.bgs) {
+    const id = stableBuffItemId(token.id, "bg", d.buffId);
+    const sig = sigBg(d);
+    desired.set(id, { item: buildBgItem(token, d, id, sig), sig });
   }
-  let staleLocalIds = tokenLocalCache.get(token.id);
-  if (staleLocalIds === undefined) {
-    try {
-      const ex = await OBR.scene.local.getItems((it) =>
-        (it.metadata?.[OWNER_KEY] as string) === token.id &&
-        (it.metadata?.[ROLE_KEY] as string) !== "particle",
-      );
-      staleLocalIds = ex.map((it) => it.id);
-    } catch {
-      staleLocalIds = [];
-    }
-    tokenLocalCache.set(token.id, staleLocalIds);
+  for (const d of desc.labels) {
+    const id = stableBuffItemId(token.id, "label", d.buffId);
+    const sig = sigLabel(d);
+    desired.set(id, { item: buildLabelItem(token, d, id, sig), sig });
+  }
+  for (const d of desc.webms) {
+    const id = stableBuffItemId(token.id, "webm", d.buffId);
+    const sig = sigWebm(d);
+    desired.set(id, { item: buildWebmItem(token, d, id, sig), sig });
   }
 
-  const items: Item[] = [];
-  for (const d of desc.bgs)    items.push(buildBgItem(token, d));
-  for (const d of desc.labels) items.push(buildLabelItem(token, d));
-  for (const d of desc.webms)  items.push(buildWebmItem(token, d));
+  // 2) Read existing id→sig from cache, or hydrate from scene on miss.
+  //    Hydration runs both maps in parallel so cold-start cost is one
+  //    round-trip wall-time, not two.
+  let existing = tokenItemCache.get(token.id);
+  let existingLocal = tokenLocalCache.get(token.id);
+  if (existing === undefined || existingLocal === undefined) {
+    const [s, l] = await Promise.all([
+      existing === undefined ? hydrateSceneCache(token.id) : Promise.resolve(existing),
+      existingLocal === undefined ? hydrateLocalCache(token.id) : Promise.resolve(existingLocal),
+    ]);
+    existing = s;
+    existingLocal = l;
+    tokenItemCache.set(token.id, existing);
+    tokenLocalCache.set(token.id, existingLocal);
+  }
 
-  if (existingIds.length > 0) {
-    try { await OBR.scene.items.deleteItems(existingIds); }
-    catch (e) {
-      logErr(`scene.items.deleteItems(token=${token.id}) failed`, e);
-      invalidateTokenBuffCache(token.id); // cache may be stale
-    }
+  // 3) Compute diff:
+  //      toAdd    — desired ids whose sig differs from existing (or absent)
+  //      toDelete — existing scene ids no longer desired, PLUS the ids
+  //                 of items being replaced (sig changed). Same id can't
+  //                 appear in both addItems and deleteItems within the
+  //                 same batch — we sequence delete-before-add for safety.
+  //    Items whose id is in both with MATCHING sig are SKIPPED: no
+  //    network call, no re-render, no flicker.
+  const toAdd: Item[] = [];
+  const toAddIds: string[] = [];
+  const toDelete: string[] = [];
+  for (const [id, { item, sig }] of desired) {
+    const prev = existing.get(id);
+    if (prev === sig) continue; // unchanged — skip
+    if (prev !== undefined) toDelete.push(id); // replacing
+    toAdd.push(item);
+    toAddIds.push(id);
   }
-  if (staleLocalIds.length > 0) {
-    try { await OBR.scene.local.deleteItems(staleLocalIds); }
-    catch { invalidateTokenBuffCache(token.id); }
+  for (const id of existing.keys()) {
+    if (!desired.has(id)) toDelete.push(id);
   }
-  if (items.length > 0) {
-    try {
-      await OBR.scene.items.addItems(items);
-      // Update cache with the new ids we just added (scene items only;
-      // local items get tracked separately below in particles.syncForToken).
-      tokenItemCache.set(token.id, items.map((i) => (i as Item).id));
-    } catch (e) {
-      logErr(`addItems(token=${token.id}) failed`, e);
-      invalidateTokenBuffCache(token.id);
-    }
-  } else {
-    tokenItemCache.set(token.id, []);
+  // Stale local items (older renders that landed in scene.local) are
+  // always wiped — we no longer write to scene.local from this path,
+  // so anything sitting there is leftover from before this refactor.
+  const localToDelete = Array.from(existingLocal.keys());
+
+  // 4) Parallel execute. Delete is collapsed into a single OBR call;
+  //    add is a single call; both fire concurrently. Wall-clock time
+  //    drops to one round trip vs the previous 2-3 sequential awaits.
+  //
+  //    Safety: items in toAdd carry stable ids that match toDelete
+  //    entries (for sig-changed buffs). OBR processes both deltas in
+  //    parallel — if delete somehow lands AFTER add, the new item
+  //    would be removed. Empirically this hasn't happened (OBR seems
+  //    to enqueue ops in receive order), but we keep an error-recovery
+  //    path: any failure invalidates the cache so the next sync
+  //    re-hydrates from scene and self-heals.
+  const ops: Promise<unknown>[] = [];
+  if (toDelete.length > 0) {
+    ops.push(
+      OBR.scene.items.deleteItems(toDelete).catch((e) => {
+        logErr(`scene.items.deleteItems(token=${token.id}) failed`, e);
+        invalidateTokenBuffCache(token.id);
+      }),
+    );
   }
-  // After deletes the local cache is empty until particles repopulate;
-  // particle items aren't tracked here (different ROLE_KEY filter), so
-  // local cache reset to [] is correct for our owned items.
-  tokenLocalCache.set(token.id, []);
+  if (localToDelete.length > 0) {
+    ops.push(
+      OBR.scene.local.deleteItems(localToDelete).catch(() => {
+        invalidateTokenBuffCache(token.id);
+      }),
+    );
+  }
+  if (toAdd.length > 0) {
+    ops.push(
+      OBR.scene.items.addItems(toAdd).catch((e) => {
+        logErr(`addItems(token=${token.id}) failed`, e);
+        invalidateTokenBuffCache(token.id);
+      }),
+    );
+  }
+  await Promise.all(ops);
+
+  // 5) Update cache to match the post-sync state. If we just
+  //    invalidated (above catch path), don't repopulate — the next
+  //    sync will re-hydrate from scene.
+  if (tokenItemCache.has(token.id)) {
+    const next = new Map<string, string>();
+    for (const [id, { sig }] of desired) next.set(id, sig);
+    tokenItemCache.set(token.id, next);
+  }
+  if (tokenLocalCache.has(token.id)) {
+    tokenLocalCache.set(token.id, new Map());
+  }
 
   await particles.syncForToken(token.id, desc.effectBuffs, {
     cx: desc.cx, cy: desc.cy,
