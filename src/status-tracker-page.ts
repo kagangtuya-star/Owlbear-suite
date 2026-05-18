@@ -285,7 +285,11 @@ const LS_BUFF_CATALOG = "obr-suite/status/buff-catalog";
 // against the 256×256 actual files and the buff rendered drifting
 // bottom-right. The u_* id prefix is reserved for built-in defaults
 // so blanket-replacing them won't clobber user-created buffs.
-const DEFAULTS_MIGRATION_VERSION = 5;
+// v6: webms re-encoded to 192×192 with alpha-preserving VP8. Drop
+// the webmIntrinsicW/H overrides (now files match the 192 default).
+// Same force-refresh path strips the stale 256 overrides from v5
+// catalogs.
+const DEFAULTS_MIGRATION_VERSION = 6;
 const LS_DEFAULTS_VERSION = "obr-suite/status/defaults-version";
 
 /**
