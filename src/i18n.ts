@@ -10,6 +10,7 @@ const TR: Dict = {
   // Cluster buttons
   btnTimeStop: { zh: "时停", en: "Time Stop" },
   btnFocus: { zh: "同步视口", en: "Sync Viewport" },
+  btnMusic: { zh: "音乐", en: "Music" },
   btnBestiaryPopup: { zh: "怪物图鉴", en: "Bestiary" },
   btnCharCardPopup: { zh: "角色卡", en: "Character Card" },
   btnCharCardPanel: { zh: "角色卡界面", en: "Character Card Panel" },
