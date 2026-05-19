@@ -392,6 +392,7 @@ function disconnectPeer() {
   unpairBtn.style.display = "none";
 }
 function handlePeerMessage(msg: any) {
+  console.info("[music-board] peer msg", msg);
   if (!msg || typeof msg !== "object") return;
   const next = structuredClone(currentState);
   switch (msg.type) {
@@ -443,6 +444,14 @@ function handlePeerMessage(msg: any) {
       break;
     default: return;
   }
+  // PRIORITY 1: apply locally NOW (the click that connected the peer
+  // counts as a user gesture, so the audio context is allowed to
+  // resume even though this isn't fired from a click handler).
+  void applyState(next);
+  // PRIORITY 2: persist to scene metadata so other players' popovers
+  // sync via their onMetadataChange listener. If the scene isn't
+  // ready, this silently fails — that's fine, we already applied
+  // locally so the GM still hears music.
   void writeSceneMusic(next);
 }
 
@@ -457,20 +466,19 @@ function pad2(n: number) { return n < 10 ? "0" + n : "" + n; }
 
 function renderUI() {
   const bgm = currentState.bgm;
+  const playing = !!(bgm && !bgm.paused);
   if (bgm) {
-    const playing = !bgm.paused;
     npCard.classList.toggle("playing", playing);
     npStatus.textContent = playing ? "正在播放" : "已暂停";
     npTitle.textContent = bgm.name || "未命名 BGM";
-    // Mini-bar mirror
-    if (miniTitle) miniTitle.textContent = `${playing ? "♪ " : "‖ "}${bgm.name || ""}`;
   } else {
     npCard.classList.remove("playing");
     npStatus.textContent = "空闲";
     npTitle.textContent = "没有 BGM 在播放";
     npTime.textContent = "--:-- / --:--";
-    if (miniTitle) miniTitle.textContent = "空闲";
   }
+  // Mini-bar mirror: just spin + dot, no track name (tiny icon-only).
+  if (miniBar) miniBar.classList.toggle("playing", playing);
 }
 
 setInterval(() => {
@@ -482,23 +490,24 @@ setInterval(() => {
   }
 }, 500);
 
-// ---- Minimize toggle (popover stays open) ---------------------------
+// ---- Role + minimize toggle -----------------------------------------
 //
-// Closing the OBR popover destroys the iframe and stops music. Minimize
-// instead collapses the visible content to a thin status pill at the
-// top of the popover area; the iframe stays alive so audio + PeerJS
-// keep running. The hidden areas are transparent (hidePaper:true), but
-// the popover footprint still blocks clicks in its registered area —
-// move the OBR people-panel etc out of the way if you need that space.
+// The opener (background module) stamps ?role=GM|PLAYER and ?mini=1
+// onto the popover URL. PLAYER popovers boot minimized (so the GM
+// hitting play doesn't slam UI across every player's screen).
+const params = new URLSearchParams(location.search);
+const role: "GM" | "PLAYER" = params.get("role") === "PLAYER" ? "PLAYER" : "GM";
+const bootMinimized = params.get("mini") === "1";
+appEl.classList.toggle("role-player", role === "PLAYER");
+
 let minimized = false;
 function setMinimized(state: boolean) {
   minimized = state;
-  if (state) {
-    appEl.classList.add("minimized");
-  } else {
-    appEl.classList.remove("minimized");
-  }
+  if (state) appEl.classList.add("minimized");
+  else       appEl.classList.remove("minimized");
 }
+setMinimized(bootMinimized);
+
 minimizeBtn?.addEventListener("click", () => setMinimized(true));
 miniExpand?.addEventListener("click", () => setMinimized(false));
 miniBar?.addEventListener("click", (e) => {

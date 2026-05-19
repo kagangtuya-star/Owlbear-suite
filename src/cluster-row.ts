@@ -57,6 +57,7 @@ const LS_ANNOUNCE_SEEN = "obr-suite/announce-seen-version";
 let cachedAnnounceVersion: string | null = null;
 
 let timeStopActive = false;
+let musicBoardOpen = false;
 let isGM = false;
 
 function isAutoPopupOn(key: string): boolean {
@@ -144,6 +145,16 @@ function renderRow() {
       })
     );
   }
+  if (isGM && s.enabled.musicBoard) {
+    parts.push(
+      btnHTML({
+        id: "btnMusic",
+        labelHtml: t(lang, "btnMusic"),
+        active: musicBoardOpen,
+        title: t(lang, "btnMusic"),
+      })
+    );
+  }
 
   // Popup toggles group (悬浮窗) — bestiary auto-popup + character-card
   // auto-info. Dice-history toggle moved out: it has its own dedicated
@@ -227,6 +238,7 @@ function renderRow() {
 
   document.getElementById("btnTimeStop")?.addEventListener("click", onTimeStop);
   document.getElementById("btnFocus")?.addEventListener("click", onFocus);
+  document.getElementById("btnMusic")?.addEventListener("click", onMusic);
   document
     .getElementById("btnBestiaryPopup")
     ?.addEventListener("click", onBestiaryPopup);
@@ -252,6 +264,16 @@ function onFocus() {
   try {
     OBR.broadcast.sendMessage(
       BC_FOCUS_TRIGGER,
+      { source: "cluster-row" },
+      { destination: "LOCAL" }
+    );
+  } catch {}
+}
+
+function onMusic() {
+  try {
+    OBR.broadcast.sendMessage(
+      "com.obr-suite/music-board:toggle",
       { source: "cluster-row" },
       { destination: "LOCAL" }
     );
@@ -396,6 +418,10 @@ OBR.onReady(async () => {
   installSupporterOverlayCloseListener();
   OBR.broadcast.onMessage("com.obr-suite/timestop-state", (event) => {
     timeStopActive = !!(event.data as any)?.active;
+    renderRow();
+  });
+  OBR.broadcast.onMessage("com.obr-suite/music-board:state-active", (event) => {
+    musicBoardOpen = !!(event.data as any)?.open;
     renderRow();
   });
 
