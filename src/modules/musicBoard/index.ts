@@ -30,12 +30,20 @@ const PAGE_URL   = assetUrl("music-board.html");
 // the popover writes. The popover overwrites its entire key on every
 // peer message; if we shared a key our `open` flag would be lost on
 // the first bgm-load and the popover would auto-close.
-const META_KEY_OPEN = "com.obr-suite/music-board:open";
-const BC_TOGGLE     = "com.obr-suite/music-board:toggle";
-const BC_ACTIVE     = "com.obr-suite/music-board:state-active";
+const META_KEY_OPEN  = "com.obr-suite/music-board:open";
+// Same key the popover writes its MusicState to — we only touch it
+// when the GM TOGGLES open=true, to wipe any stale playback state
+// from a previous session before the popover boots and replays it.
+const META_KEY_STATE = "com.obr-suite/music-board:state";
+const BC_TOGGLE      = "com.obr-suite/music-board:toggle";
+const BC_ACTIVE      = "com.obr-suite/music-board:state-active";
 
-const POPOVER_W = 380;
-const POPOVER_H = 540;
+// Dimensions differ by role: the player popover has no pair-section
+// (CSS hides it), so it can be much shorter. The width stays the same
+// so the layout doesn't reflow inside.
+const POPOVER_W       = 380;
+const POPOVER_H_GM    = 540;
+const POPOVER_H_PLYR  = 300;
 // Clear OBR's right-side panels (people / scene settings) — 120 px
 // gap leaves the popover well off the toolbar.
 const RIGHT_INSET = 120;
@@ -89,8 +97,24 @@ async function toggleRoomOpen(): Promise<void> {
   try {
     const meta = await OBR.scene.getMetadata();
     const cur = (meta[META_KEY_OPEN] as any) || {};
-    const next = { open: !cur.open, ts: Date.now() };
-    await OBR.scene.setMetadata({ [META_KEY_OPEN]: next as any });
+    const newOpen = !cur.open;
+    const patch: Record<string, unknown> = {
+      [META_KEY_OPEN]: { open: newOpen, ts: Date.now() },
+    };
+    // Going from closed → open: blank the music-state metadata too,
+    // so old BGM / SFX entries from a previous pairing session don't
+    // get replayed on every popover that just opened. Studio sends a
+    // fresh snapshot right after pairing, which then fills this back
+    // in legitimately.
+    if (newOpen) {
+      patch[META_KEY_STATE] = {
+        bgm: null,
+        sfx: [],
+        bus: { bgm: 0.8, sfx: 1.0 },
+        ts: Date.now(),
+      };
+    }
+    await OBR.scene.setMetadata(patch);
   } catch (e) {
     console.warn("[music-board] toggle failed", e);
   }
@@ -121,12 +145,13 @@ async function openPopover(): Promise<void> {
   // their UI just because the GM hit play. The popover reads
   // ?mini=1 from the URL on boot.
   const url = `${PAGE_URL}?role=${myRole}${myRole === "PLAYER" ? "&mini=1" : ""}`;
+  const targetH = myRole === "PLAYER" ? POPOVER_H_PLYR : POPOVER_H_GM;
   try {
     await OBR.popover.open({
       id: POPOVER_ID,
       url,
       width: POPOVER_W,
-      height: Math.min(POPOVER_H, vh - 80),
+      height: Math.min(targetH, vh - 80),
       anchorReference: "POSITION",
       anchorPosition: { left: vw - RIGHT_INSET, top: 56 },
       anchorOrigin:    { horizontal: "RIGHT", vertical: "TOP" },
