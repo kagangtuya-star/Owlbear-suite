@@ -39,6 +39,10 @@ export const PANEL_IDS = {
    *  right-click menu). Same drag mechanics as the bestiary info /
    *  cc-info popovers. */
   hpBar: "hp-bar",
+  /** Music board popover (DM cluster-row trigger). Drag handle is on
+   *  the popover's left edge (facing the canvas interior since the
+   *  popover anchors to the viewport's right side). */
+  musicBoard: "music-board",
 } as const;
 
 export type PanelId = (typeof PANEL_IDS)[keyof typeof PANEL_IDS];
