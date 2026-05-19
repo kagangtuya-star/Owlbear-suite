@@ -87,7 +87,7 @@
   { "name": "常乐", "amount":25 },
   { "name": "落魇", "amount":20 },
   { "name": "人弗", "amount":70 },
-  { "name": "恐惧の花生王一士", "amount":50 },
+  { "name": "恐惧の花生王一土", "amount":50 },
   { "name": "吃水人", "amount":10 },
   { "name": "黑月", "amount":5 },
   { "name": "乌喵", "amount":50 },
@@ -100,5 +100,5 @@
   { "name": "Arashi岚", "amount":50 },
   { "name": "桌角剧团的囧神", "amount":10 },
   { "name": "感谢做出的枭熊插件", "amount":50 },
-  { "name": "君兮同学", "amount":50 }
+  { "name": "君兮同学", "amount":15 }
 ]

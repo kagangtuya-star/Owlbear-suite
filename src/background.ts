@@ -22,6 +22,7 @@ import { setupStatusTracker, teardownStatusTracker } from "./modules/statusTrack
 import { setupHpBar, teardownHpBar } from "./modules/hpBar";
 import { setupMetadataInspector, teardownMetadataInspector } from "./modules/metadata-inspector";
 import { setupFullFog, teardownFullFog } from "./modules/fullFog";
+import { setupMusicBoard, teardownMusicBoard } from "./modules/musicBoard";
 import { setupCrossSceneCards } from "./modules/cross-scene-cards";
 import { setupPerfWindow } from "./modules/perfWindow";
 import { assetUrl } from "./asset-base";
@@ -594,6 +595,13 @@ const modules: Partial<Record<keyof ReturnType<typeof getState>["enabled"], Modu
   // Trickster + circle-image promoted from dev to stable on 2026-05-08.
   trickster: { setup: setupTrickster, teardown: teardownTrickster },
   circleImage: { setup: setupCircleImage, teardown: teardownCircleImage },
+  // Music board promoted to stable 2026-05-19 — studio web tool +
+  // default catalog + persistent background engine + settings panel
+  // entry are all in place. Anyone on either channel can use it.
+  musicBoard: {
+    setup: async () => { await setupMusicBoard(); },
+    teardown: async () => { teardownMusicBoard(); },
+  },
   // fullFog stays dev-only — door / window cutting still in design.
   ...(STABLE_HIDES
     ? {}

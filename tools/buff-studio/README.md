@@ -85,7 +85,7 @@ https://obr.dnd.center/studio/monster-studio/   ← Page 1
 | Codec        | VP9 (libvpx-vp9)                         |
 | pix_fmt      | yuva420p (BlockAdditional alpha)         |
 | Metadata tag | `alpha_mode=1`                           |
-| Resolution   | configurable, default 256×256 (even dims)|
+| Resolution   | configurable, default 500×500 (even dims)|
 | Duration     | configurable, default 1.5 s              |
 | FPS          | configurable, default 30                 |
 

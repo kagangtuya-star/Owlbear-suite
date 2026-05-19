@@ -34,7 +34,8 @@ export type ModuleId =
   | "fullFog"
   | "trickster"
   | "circleImage"
-  | "follow";
+  | "follow"
+  | "musicBoard";
 
 export type DataVersion = "2014" | "2024" | "all";
 export type Language = "zh" | "en";
@@ -201,6 +202,10 @@ export const DEFAULT_STATE: SuiteState = {
     // registered as a module in background.ts. modules/follow/ source
     // is kept on disk un-wired in case it's revived.
     follow: false,
+    // Music board — promoted to stable 2026-05-19. Background-resident
+    // engine plays audio + maintains the PeerJS connection across
+    // popover open/close, so all players hear synchronised audio.
+    musicBoard: true,
   },
   dataVersion: "2024",
   allowPlayerMonsters: false,

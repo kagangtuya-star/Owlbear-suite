@@ -18,8 +18,8 @@ import { initDraw } from "../draw-kit/draw.js";
 const state = {
   layers: [],          // bottom → top draw order
   selectedId: null,
-  width: 256,
-  height: 256,
+  width: 500,
+  height: 500,
   duration: 1.5,
   fps: 30,
   loop: true,
@@ -794,8 +794,8 @@ function applyCanvasSize() {
   syncStageMeta();
 }
 function syncCanvasSettings() {
-  state.width = makeEven(clampInt(canvasW.value, 32, 1024, 256));
-  state.height = makeEven(clampInt(canvasH.value, 32, 1024, 256));
+  state.width = makeEven(clampInt(canvasW.value, 32, 1024, 500));
+  state.height = makeEven(clampInt(canvasH.value, 32, 1024, 500));
   state.duration = clampFloat(canvasDur.value, 0.2, 10, 1.5);
   state.fps = clampInt(canvasFps.value, 8, 60, 30);
   applyCanvasSize();
@@ -808,8 +808,8 @@ function setCanvasSizeFit(w, h) {
     cw = Math.round(cw * s);
     ch = Math.round(ch * s);
   }
-  state.width = makeEven(clampInt(cw, 32, 1024, 256));
-  state.height = makeEven(clampInt(ch, 32, 1024, 256));
+  state.width = makeEven(clampInt(cw, 32, 1024, 500));
+  state.height = makeEven(clampInt(ch, 32, 1024, 500));
   canvasW.value = state.width;
   canvasH.value = state.height;
   applyCanvasSize();
@@ -915,8 +915,8 @@ generateBtn.addEventListener("click", async () => {
 
   paintBoard = initDraw({
     mount: document.getElementById("paintMount"),
-    width: 256,
-    height: 256,
+    width: 500,
+    height: 500,
     saveLabel: "💾 保存到素材",
     onSave: (url) => {
       const arr = loadDrawings();
