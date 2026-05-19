@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>OBR 音乐工坊 / Music Studio</title>
+<link rel="stylesheet" href="./style.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <svg class="brand-mark" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M5 11 V4 L13 3 V10"/>
+      <circle cx="4" cy="11.5" r="1.7"/>
+      <circle cx="12" cy="10.5" r="1.7"/>
+    </svg>
+    <span class="brand-name">OBR Suite Studio</span>
+  </div>
+  <nav class="studio-tabs">
+    <a class="studio-tab" href="../monster-studio/index.html">
+      <svg class="tab-ico" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M2 6 L4 4 L6 6"/><path d="M10 6 L12 4 L14 6"/>
+        <path d="M4 8 Q8 12 12 8"/><circle cx="5.5" cy="9" r="0.7" fill="currentColor"/><circle cx="10.5" cy="9" r="0.7" fill="currentColor"/>
+      </svg>
+      <span>怪物编辑</span>
+    </a>
+    <a class="studio-tab" href="../buff-studio/index.html">
+      <svg class="tab-ico" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M8 2 L8 14 M2 8 L14 8 M3.5 3.5 L12.5 12.5 M3.5 12.5 L12.5 3.5"/>
+      </svg>
+      <span>Buff 合成</span>
+    </a>
+    <a class="studio-tab" href="../dice-studio/index.html">
+      <svg class="tab-ico" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="3" y="3" width="10" height="10" rx="1.6"/>
+        <circle cx="6" cy="6" r="0.8" fill="currentColor"/><circle cx="10" cy="10" r="0.8" fill="currentColor"/><circle cx="8" cy="8" r="0.8" fill="currentColor"/>
+      </svg>
+      <span>骰子工坊</span>
+    </a>
+    <a class="studio-tab active" href="../music-studio/index.html">
+      <svg class="tab-ico" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M5 11 V4 L13 3 V10"/>
+        <circle cx="4" cy="11.5" r="1.7"/>
+        <circle cx="12" cy="10.5" r="1.7"/>
+      </svg>
+      <span>音乐板</span>
+    </a>
+  </nav>
+  <div class="topbar-actions">
+    <a href="https://obr.dnd.center/suite/manifest.json" target="_blank" class="pill-link">OBR Suite ↗</a>
+  </div>
+</header>
+
+<main class="page">
+
+  <!-- ============ SOURCE / EDITOR CARD ============ -->
+  <section class="card editor-card">
+    <header class="card-head">
+      <h2>① 来源 / Source</h2>
+      <div class="seg seg-source" id="sourceSeg">
+        <button class="seg-opt on" data-src="file">本地文件</button>
+        <button class="seg-opt"    data-src="url">外链 URL</button>
+      </div>
+    </header>
+
+    <!-- LOCAL FILE drop -->
+    <div class="src-pane" id="srcFilePane">
+      <label class="drop-zone" id="fileDrop">
+        <input type="file" id="fileInput" accept="audio/*" hidden>
+        <div class="drop-inner">
+          <svg viewBox="0 0 24 24" width="32" height="32" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M12 16 V4 M8 8 L12 4 L16 8"/>
+            <rect x="4" y="16" width="16" height="4" rx="1"/>
+          </svg>
+          <div class="drop-text">
+            <strong>拖入音频文件</strong>
+            <span class="drop-hint">支持 MP3 / WAV / M4A / OGG / FLAC / OPUS / WebM — 也可点击选择</span>
+          </div>
+        </div>
+      </label>
+    </div>
+
+    <!-- URL paste -->
+    <div class="src-pane hidden" id="srcUrlPane">
+      <div class="url-row">
+        <input type="url" id="urlInput" placeholder="粘贴音频直链：https://… .mp3 / .ogg / .m4a / .opus">
+        <button class="btn primary" id="urlAddBtn">添加</button>
+      </div>
+      <p class="hint">
+        外链模式不下载也不裁剪文件，浏览器直接 <code>&lt;audio src=URL&gt;</code> 播放。
+        网易云 / QQ 音乐等需要先用第三方工具拿到「真实直链 mp3 地址」，再粘贴这里。
+        URL 自动加入下方库 + 立刻能生成枭熊导入码。
+      </p>
+    </div>
+
+    <!-- ============ EDIT PANEL (visible after file loaded) ============ -->
+    <div class="edit-panel hidden" id="editPanel">
+      <div class="edit-head">
+        <input type="text" id="trackName" class="track-name" placeholder="曲目名称">
+        <span class="track-meta" id="trackMeta"></span>
+      </div>
+
+      <!-- waveform with trim handles -->
+      <div class="waveform-wrap">
+        <canvas id="waveform" class="waveform-canvas"></canvas>
+        <div class="trim-overlay" id="trimOverlay">
+          <div class="trim-mask trim-mask-left"  id="trimMaskL"></div>
+          <div class="trim-mask trim-mask-right" id="trimMaskR"></div>
+          <div class="trim-handle trim-handle-l" id="trimHandleL"><span></span></div>
+          <div class="trim-handle trim-handle-r" id="trimHandleR"><span></span></div>
+          <div class="play-cursor" id="playCursor"></div>
+        </div>
+      </div>
+
+      <div class="trim-readout">
+        <span><label>起点</label><input type="text" id="trimStartTxt" maxlength="9"></span>
+        <span><label>终点</label><input type="text" id="trimEndTxt"  maxlength="9"></span>
+        <span class="trim-len">截取 <b id="trimLenTxt">--</b></span>
+        <button class="btn ghost small" id="resetTrimBtn">重置</button>
+      </div>
+
+      <div class="edit-controls">
+        <label class="ctrl">
+          <span>码率</span>
+          <div class="seg" id="bitrateSeg">
+            <button class="seg-opt"    data-br="24">24k 语音</button>
+            <button class="seg-opt"    data-br="48">48k 环境</button>
+            <button class="seg-opt on" data-br="64">64k BGM</button>
+            <button class="seg-opt"    data-br="96">96k 高质</button>
+            <button class="seg-opt"    data-br="128">128k 旁白</button>
+          </div>
+        </label>
+        <label class="ctrl">
+          <span>声道</span>
+          <div class="seg" id="channelSeg">
+            <button class="seg-opt on" data-ch="1">单声道</button>
+            <button class="seg-opt"    data-ch="2">立体声</button>
+          </div>
+        </label>
+        <label class="ctrl">
+          <span>归到</span>
+          <div class="seg" id="busSeg">
+            <button class="seg-opt on" data-bus="bgm">BGM</button>
+            <button class="seg-opt"    data-bus="sfx">SFX</button>
+          </div>
+        </label>
+        <label class="ctrl ctrl-check">
+          <input type="checkbox" id="loopChk" checked>
+          <span>循环</span>
+        </label>
+      </div>
+
+      <div class="estimate">
+        <span>预计大小 <b id="sizeEstimate">--</b></span>
+        <span>原始大小 <b id="originalSize">--</b></span>
+      </div>
+
+      <div class="action-row">
+        <button class="btn" id="previewBtn">▶ 预览截取段</button>
+        <button class="btn primary" id="encodeBtn">压缩并加入库</button>
+        <button class="btn ghost" id="cancelEditBtn">取消</button>
+      </div>
+
+      <div class="progress-row hidden" id="encodeProg">
+        <div class="progress-track"><div class="progress-fill" id="encodeFill"></div></div>
+        <span id="encodeMsg">准备中…</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ LIBRARY CARD ============ -->
+  <section class="card library-card">
+    <header class="card-head">
+      <h2>② 我的库 / Library</h2>
+      <div class="lib-tools">
+        <input type="search" id="libSearch" placeholder="搜索曲目…" class="lib-search">
+        <div class="seg" id="libFilterSeg">
+          <button class="seg-opt on" data-flt="all">全部</button>
+          <button class="seg-opt"    data-flt="bgm">BGM</button>
+          <button class="seg-opt"    data-flt="sfx">SFX</button>
+        </div>
+        <button class="btn small" id="exportAllBtn">📋 全部导出码</button>
+      </div>
+    </header>
+    <div class="lib-grid" id="libGrid">
+      <div class="lib-empty">库是空的——上面拖入文件或粘贴 URL 就会出现在这里。</div>
+    </div>
+  </section>
+
+  <!-- ============ SHARE-CODE MODAL ============ -->
+  <div class="modal hidden" id="shareModal">
+    <div class="modal-backdrop" data-close></div>
+    <div class="modal-card">
+      <header class="modal-head">
+        <h3 id="shareTitle">枭熊导入码</h3>
+        <button class="modal-close" data-close>×</button>
+      </header>
+      <div class="modal-body">
+        <p class="hint">把下面这段代码复制到枭熊的「音乐板 → 导入码」输入框里。</p>
+        <textarea id="shareCode" readonly></textarea>
+        <div class="share-meta" id="shareMeta"></div>
+      </div>
+      <footer class="modal-foot">
+        <button class="btn primary" id="copyShareBtn">复制到剪贴板</button>
+        <button class="btn ghost" data-close>关闭</button>
+      </footer>
+    </div>
+  </div>
+
+  <!-- ============ TOAST ============ -->
+  <div class="toast-stack" id="toastStack"></div>
+
+</main>
+
+<script type="module" src="./app.js"></script>
+</body>
+</html>
