@@ -360,12 +360,22 @@ async function connectPeer(code: string) {
         toast(`已连接到网页音乐板 ${code}`, "ok");
         pairBtn.style.display = "none";
         unpairBtn.style.display = "";
+        // Fresh-slate the scene metadata so stale BGM / SFX from a
+        // previous session don't replay the moment we pair. Studio
+        // sends its current state right after conn.open so we'll get
+        // the live picture filled in within a tick.
+        void applyState(structuredClone(DEFAULT_STATE));
+        void writeSceneMusic(structuredClone(DEFAULT_STATE));
       });
       conn.on("data", (data: any) => handlePeerMessage(data));
       conn.on("close", () => {
         setPairStatus("已断开", "error");
         pairBtn.style.display = "";
         unpairBtn.style.display = "none";
+        // Studio window closed (or network blip) — stop OBR playback
+        // and clear metadata so every player's popover also stops.
+        void applyState(structuredClone(DEFAULT_STATE));
+        void writeSceneMusic(structuredClone(DEFAULT_STATE));
       });
       conn.on("error", (e: any) => {
         setPairStatus("连接错误", "error");
@@ -558,6 +568,34 @@ function toast(text: string, kind: "ok" | "warn" | "error" | "" = "") {
     setTimeout(() => el.remove(), 260);
   }, 2400);
 }
+
+// ---- First-gesture audio unlock -------------------------------------
+//
+// Player popovers boot minimized — the user might never click "pair"
+// or anything else, but they still need audio. WebAudio context can
+// only `resume()` after a user gesture IN this document, so we
+// install a capture-phase click/touch listener that fires on the
+// FIRST user interaction anywhere in the popover. After it fires:
+//   1. Force ctx.resume()
+//   2. Re-apply current state so the audio chain wires up properly
+//      and bgmAudio.play() can succeed without autoplay error.
+// One-shot — once unlocked, the listener removes itself.
+let audioUnlocked = false;
+function unlockAudio() {
+  if (audioUnlocked) return;
+  audioUnlocked = true;
+  document.removeEventListener("click", unlockAudio, true);
+  document.removeEventListener("touchstart", unlockAudio, true);
+  // Resume the context (no-op if already running).
+  void getCtx().resume().catch(() => {});
+  // Re-apply current state so audio actually starts. We push lastBgmKey
+  // back so applyState's diff thinks the track is new and re-issues
+  // bgmAudio.play() — which now has the live gesture credit.
+  lastBgmKey = "";
+  void applyState(currentState);
+}
+document.addEventListener("click",     unlockAudio, true);
+document.addEventListener("touchstart", unlockAudio, true);
 
 // ---- Boot ----------------------------------------------------------
 OBR.onReady(async () => {
