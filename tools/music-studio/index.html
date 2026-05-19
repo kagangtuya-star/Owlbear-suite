@@ -110,20 +110,6 @@
           </button>
         </div>
 
-        <!-- 待播放队列 — corner overlay at right-bottom of BGM deck.
-             Drag library cards here to queue them; first item auto-plays
-             when BGM ends (and is also playable on drop if BGM empty).
-             Queue items themselves are draggable for reorder. -->
-        <div class="queue" id="queue">
-          <div class="queue-head">
-            <span class="queue-title">待播放</span>
-            <span class="queue-count" id="queueCount">0</span>
-            <button class="queue-clear" id="queueClearBtn" title="清空">×</button>
-          </div>
-          <div class="queue-rail" id="queueRail">
-            <div class="queue-empty">拖到这里排队<br>BGM 空时立即播</div>
-          </div>
-        </div>
       </div>
 
       <!-- BGM vertical volume bar on the right -->
@@ -204,7 +190,7 @@
   <section class="favorites-section" id="favoritesSection">
     <header class="fav-head">
       <h2>常用 <span class="fav-count" id="favCount">0</span></h2>
-      <span class="fav-hint">拖入收藏 · 拖出取消 · 点击或拖到唱片台播放</span>
+      <span class="fav-hint">拖入收藏 · 点击或拖到唱片台播放 · 右上 × 移除</span>
       <button class="btn btn--ghost btn--xs" id="favClearBtn">清空</button>
     </header>
     <div class="fav-grid" id="favGrid">

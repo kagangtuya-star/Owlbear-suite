@@ -435,100 +435,6 @@ input:focus, textarea:focus { outline: none; }
 .vvol[data-bus="bgm"] .vvol-label { color: var(--bgm-color); }
 .vvol[data-bus="sfx"] .vvol-label { color: var(--sfx-color); }
 
-/* ===================== QUEUE OVERLAY ===================== */
-/* Anchored bottom-right of the BGM deck-info area; dashed border;
- * accepts library card drops + supports reorder of its own pills. */
-.queue {
-  position: absolute;
-  right: 8px; bottom: 8px;
-  width: clamp(160px, 36%, 240px);
-  max-height: 130px;
-  display: flex; flex-direction: column; gap: 4px;
-  padding: 7px 8px 6px;
-  background: rgba(10,12,20,0.65);
-  backdrop-filter: blur(4px);
-  border: 1.5px dashed rgba(255,255,255,0.18);
-  border-radius: 10px;
-  transition: border-color .15s, background .15s;
-  z-index: 3;
-  pointer-events: auto;
-}
-.bgm-deck:hover .queue { background: rgba(10,12,20,0.78); }
-.queue.drop-target {
-  border-color: var(--accent);
-  border-style: solid;
-  background: rgba(74,214,199,0.10);
-}
-.queue-head { display: flex; align-items: center; gap: 6px; font-size: 10.5px; color: var(--text-3); }
-.queue-title { font-weight: 600; color: var(--text-2); letter-spacing: 0.4px; }
-.queue-count {
-  display: inline-block;
-  padding: 0 6px;
-  background: var(--bg-3); color: var(--accent);
-  border-radius: 999px;
-  font-size: 9.5px; font-weight: 700;
-  margin-right: auto;
-}
-.queue-clear {
-  width: 16px; height: 16px;
-  background: transparent; border: none;
-  color: var(--text-3);
-  font-size: 14px; line-height: 1;
-  cursor: pointer;
-  border-radius: 50%;
-  display: inline-flex; align-items: center; justify-content: center;
-}
-.queue-clear:hover { background: rgba(255,107,107,0.20); color: var(--red); }
-.queue-rail {
-  display: flex; flex-wrap: wrap; gap: 3px;
-  overflow-y: auto;
-  flex: 1; min-height: 0;
-  padding: 1px;
-}
-.queue-empty {
-  flex: 1;
-  display: flex; align-items: center; justify-content: center;
-  color: var(--text-3);
-  font-size: 10.5px;
-  font-style: italic;
-  padding: 4px;
-  text-align: center;
-  line-height: 1.5;
-}
-.queue-item {
-  display: flex; align-items: center; gap: 4px;
-  padding: 3px 6px 3px 9px;
-  background: linear-gradient(180deg, var(--bg-3), var(--bg-2));
-  border: 1px solid var(--line-2);
-  border-radius: 999px;
-  font-size: 10.5px;
-  white-space: nowrap;
-  max-width: 100%;
-  cursor: grab;
-  transition: background .12s, border-color .12s, transform .08s, opacity .12s;
-  position: relative;
-}
-.queue-item:hover {
-  background: linear-gradient(180deg, var(--bg-4), var(--bg-3));
-  border-color: var(--line-2);
-  transform: translateY(-1px);
-}
-.queue-item.dragging { opacity: 0.35; }
-.queue-item.drop-before { box-shadow: -2px 0 0 0 var(--accent); }
-.queue-item.drop-after  { box-shadow:  2px 0 0 0 var(--accent); }
-.queue-item-name { overflow: hidden; text-overflow: ellipsis; min-width: 0; max-width: 100px; }
-.queue-item-x {
-  width: 14px; height: 14px;
-  background: transparent; border: none;
-  color: var(--text-3); font-size: 11px; line-height: 1;
-  cursor: pointer;
-  display: inline-flex; align-items: center; justify-content: center;
-  border-radius: 50%;
-  flex-shrink: 0;
-  opacity: 0.6;
-}
-.queue-item-x:hover { background: rgba(255,107,107,0.20); color: var(--red); opacity: 1; }
-
 /* ===================== SFX CARD ===================== */
 .sfx-card {
   display: grid;
@@ -727,19 +633,6 @@ input:focus, textarea:focus { outline: none; }
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-sm);
   position: relative;
-}
-.library.drop-fav-here::after {
-  content: '松开从常用移除';
-  position: absolute;
-  top: 8px; right: 12px;
-  padding: 4px 10px;
-  background: rgba(255,107,107,0.15);
-  border: 1px dashed var(--red);
-  border-radius: var(--radius-sm);
-  color: var(--red);
-  font-size: 11.5px;
-  font-weight: 600;
-  pointer-events: none;
 }
 .lib-head {
   display: flex; align-items: center; gap: 10px;
@@ -1103,7 +996,6 @@ input:focus, textarea:focus { outline: none; }
   .bgm-deck { grid-template-columns: 1fr 36px; padding: 14px; gap: 12px; min-height: auto; }
   .deck-vinyl-wrap { width: 140px; height: 140px; grid-column: 1 / -1; justify-self: center; }
   .deck-tonearm { display: none; }
-  .queue { position: static; width: 100%; max-height: 180px; margin-top: 6px; }
   .sfx-card { grid-template-columns: 1fr 36px; padding: 10px; }
   .sfx-grid-inner { grid-template-columns: 1fr; }
   .sfx-pad { min-height: auto; }

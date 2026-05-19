@@ -1,14 +1,14 @@
-/* Music board module — registers the OBR action button that opens
- * the music-board popover. Page content lives in music-board.html /
- * src/music-board-page.ts; this module only sets up entry points.
+/* Music board module — owns:
+ *   • The background-resident engine (audio + PeerJS) — survives
+ *     popover open/close cycles. See engine.ts.
+ *   • The OBR tool button that opens the (thin viewer) popover.
  *
- * Dev-only (gated in background.ts via STABLE_HIDES). When the
- * studio web tool's PeerJS pairing is mature + we curate a default
- * catalog, we promote to stable.
+ * Dev-only (gated in background.ts via STABLE_HIDES).
  */
 
 import OBR from "@owlbear-rodeo/sdk";
 import { assetUrl } from "../../asset-base";
+import { setupMusicEngine, teardownMusicEngine } from "./engine";
 
 const ACTION_ID  = "com.obr-suite/music-board";
 const POPOVER_ID = "com.obr-suite/music-board/popover";
@@ -18,19 +18,18 @@ const PAGE_URL   = assetUrl("music-board.html");
 const POPOVER_W = 380;
 const POPOVER_H = 540;
 
-let unsubs: Array<() => void> = [];
-
 export async function setupMusicBoard(): Promise<void> {
-  // Scene-tool button in the left sidebar — anyone with the plugin
-  // sees it (players need to open the listener UI on their side
-  // without GM intervention so they actually hear the audio).
+  // Engine lives in the background context — created once, survives
+  // popover open/close so audio + PeerJS connection persist.
+  await setupMusicEngine();
+
   try {
     await OBR.tool.create({
       id: ACTION_ID,
       icons: [{ icon: ICON_URL, label: "音乐板 (听)" }],
       onClick: () => {
         void openPopover();
-        return false; // don't switch to this tool, just open the popover
+        return false;
       },
     });
   } catch (e) {
@@ -42,16 +41,22 @@ let popoverOpen = false;
 
 async function openPopover(): Promise<void> {
   if (popoverOpen) {
-    // Toggle close on second click.
     try { await OBR.popover.close(POPOVER_ID); } catch {}
     popoverOpen = false;
     return;
   }
-  let vw = 1280, vh = 720;
+
+  // Right-edge placement. OBR.viewport.getWidth() returns the scene
+  // canvas width which can be unexpectedly small in some setups (the
+  // user reported the popover covering the left toolbar). Defensive
+  // floor + a window.innerWidth fallback keeps the popover anchored
+  // to the right regardless.
+  let vw = 0, vh = 0;
   try { vw = await OBR.viewport.getWidth(); } catch {}
   try { vh = await OBR.viewport.getHeight(); } catch {}
-  const left = Math.max(8, vw - POPOVER_W - 12);
-  const top  = 56; // below the top bar
+  vw = Math.max(vw || 0, window.innerWidth || 0, 1024);
+  vh = Math.max(vh || 0, window.innerHeight || 0, 720);
+
   try {
     await OBR.popover.open({
       id: POPOVER_ID,
@@ -59,9 +64,12 @@ async function openPopover(): Promise<void> {
       width: POPOVER_W,
       height: Math.min(POPOVER_H, vh - 80),
       anchorReference: "POSITION",
-      anchorPosition: { left, top },
-      anchorOrigin:    { horizontal: "LEFT", vertical: "TOP" },
-      transformOrigin: { horizontal: "LEFT", vertical: "TOP" },
+      // Place the anchor at the right edge with a small inset; the
+      // RIGHT/TOP transformOrigin means the popover's right edge
+      // aligns to this point, so it always sits on the right side.
+      anchorPosition: { left: vw - 16, top: 56 },
+      anchorOrigin:    { horizontal: "RIGHT", vertical: "TOP" },
+      transformOrigin: { horizontal: "RIGHT", vertical: "TOP" },
       hidePaper: true,
       disableClickAway: true,
     });
@@ -72,12 +80,10 @@ async function openPopover(): Promise<void> {
 }
 
 export function teardownMusicBoard(): void {
-  for (const fn of unsubs.splice(0)) {
-    try { fn(); } catch {}
-  }
   try { OBR.tool.remove(ACTION_ID); } catch {}
   if (popoverOpen) {
     void OBR.popover.close(POPOVER_ID).catch(() => {});
     popoverOpen = false;
   }
+  teardownMusicEngine();
 }

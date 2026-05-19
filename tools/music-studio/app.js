@@ -39,7 +39,6 @@ const $$ = (s, root = document) => Array.from(root.querySelectorAll(s));
 
 const DT_CARD  = "application/x-obr-music-card";
 const DT_FAV   = "application/x-obr-music-fav";
-const DT_QIDX  = "application/x-obr-music-queue-idx";
 
 // ============ Refs ============
 const bgmDeck     = $(".bgm-deck");
@@ -54,7 +53,6 @@ const libCount    = $("#libCount");
 const libSearch   = $("#libSearch");
 const libGrid     = $("#libGrid");
 const libDropZone = $("#libDropZone");
-const library     = $(".library");
 const chipFilterRow = $("#chipFilterRow");
 const addFileBtn  = $("#addFileBtn");
 const addUrlBtn   = $("#addUrlBtn");
@@ -65,11 +63,6 @@ const favoritesSection = $("#favoritesSection");
 const favGrid       = $("#favGrid");
 const favCount      = $("#favCount");
 const favClearBtn   = $("#favClearBtn");
-
-const queueEl       = $("#queue");
-const queueRail     = $("#queueRail");
-const queueCount    = $("#queueCount");
-const queueClearBtn = $("#queueClearBtn");
 
 // Vertical volume controls
 const bgmVvBar     = $("#bgmVvBar");
@@ -136,14 +129,12 @@ const state = {
   turntableTrack: { "bgm": null, "sfx-0": null, "sfx-1": null, "sfx-2": null, "sfx-3": null },
   bgmHistory: [], bgmHistoryIdx: -1,
   favorites: [],         // [trackId] — persistent
-  queue:    [],          // [trackId] — auto-pop on BGM end
   tagEditId: null,
   fadeEnabled: true,     // session toggle
 };
 
 const LS_VOL   = "obr-music-board:volumes";
 const LS_FAVS  = "obr-music-board:favorites";
-const LS_QUEUE = "obr-music-board:queue";
 const LS_FADE  = "obr-music-board:fade-enabled";
 try {
   const v = JSON.parse(localStorage.getItem(LS_VOL) || "{}");
@@ -155,16 +146,11 @@ try {
   if (Array.isArray(f)) state.favorites = f.filter((x) => typeof x === "string");
 } catch {}
 try {
-  const q = JSON.parse(localStorage.getItem(LS_QUEUE) || "[]");
-  if (Array.isArray(q)) state.queue = q.filter((x) => typeof x === "string");
-} catch {}
-try {
   const fd = localStorage.getItem(LS_FADE);
   if (fd === "0") state.fadeEnabled = false;
 } catch {}
 function saveVolumes() { try { localStorage.setItem(LS_VOL, JSON.stringify(state.volumes)); } catch {} }
 function saveFavs()    { try { localStorage.setItem(LS_FAVS, JSON.stringify(state.favorites)); } catch {} }
-function saveQueue()   { try { localStorage.setItem(LS_QUEUE, JSON.stringify(state.queue)); } catch {} }
 function saveFade()    { try { localStorage.setItem(LS_FADE, state.fadeEnabled ? "1" : "0"); } catch {} }
 
 // ============ WebAudio master ============
@@ -321,13 +307,6 @@ class Turntable {
       if (!this.audio.loop) {
         this._setSpinning(false);
         this._syncPlayUI();
-        // BGM: auto-advance from queue head
-        if (this.bus === "bgm" && state.queue.length > 0) {
-          const nextId = state.queue.shift();
-          saveQueue(); renderQueue();
-          const t = state.lib.find((x) => x.id === nextId);
-          if (t) { this.load(t, true); return; }
-        }
         this.track = null;
         state.turntableTrack[this.slot] = null;
         if (this.nameEl) this.nameEl.textContent = this.bus === "bgm" ? "-- 空闲 --" : "空";
@@ -519,9 +498,6 @@ class Turntable {
         const id = state.bgmHistory[state.bgmHistoryIdx + 1].id;
         const t = state.lib.find((x) => x.id === id);
         histNextName.textContent = t ? trunc(t.name) : "下一首";
-      } else if (state.queue.length > 0) {
-        const t = state.lib.find((x) => x.id === state.queue[0]);
-        histNextName.textContent = t ? trunc(t.name) : "(队列)";
       } else { histNextName.textContent = "无"; }
     }
   }
@@ -663,11 +639,6 @@ async function refreshLibrary() {
         if (state.favorites.includes(primaryId)) state.favorites.splice(fi, 1);
         else state.favorites[fi] = primaryId;
       }
-      const qi = state.queue.indexOf(dupId);
-      if (qi >= 0) {
-        if (state.queue.includes(primaryId)) state.queue.splice(qi, 1);
-        else state.queue[qi] = primaryId;
-      }
       for (const h of state.bgmHistory) if (h.id === dupId) h.id = primaryId;
     }
     const ch = [];
@@ -676,21 +647,18 @@ async function refreshLibrary() {
     }
     state.bgmHistory = ch;
     if (state.bgmHistoryIdx >= ch.length) state.bgmHistoryIdx = ch.length - 1;
-    saveFavs(); saveQueue();
+    saveFavs();
     toast(`库自动去重：移除 ${dups.deletes.length} 个同 URL 重复条目`, "ok");
     raw = await listTracks();
   }
   state.lib = raw.map((t) => ({ tags: [], ...t }));
-  // Prune favorites / queue against deleted ids
+  // Prune favorites against deleted ids
   const ids = new Set(state.lib.map((t) => t.id));
-  const fBefore = state.favorites.length, qBefore = state.queue.length;
+  const fBefore = state.favorites.length;
   state.favorites = state.favorites.filter((id) => ids.has(id));
-  state.queue     = state.queue.filter((id) => ids.has(id));
   if (state.favorites.length !== fBefore) saveFavs();
-  if (state.queue.length     !== qBefore) saveQueue();
   renderLibrary();
   renderFavorites();
-  renderQueue();
   bgmDeckTT._updateHistoryButtons();
   syncLoopToggleUi();
 }
@@ -800,7 +768,7 @@ function makeCard(t) {
       t.name = n;
       await updateTrack(t.id, { name: n });
       for (const tt of TURNTABLES) if (tt.track?.id === t.id && tt.nameEl) tt.nameEl.textContent = n;
-      renderFavorites(); renderQueue();
+      renderFavorites();
     } else { name.textContent = t.name; }
   });
   name.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); name.blur(); } });
@@ -831,10 +799,6 @@ function makeCard(t) {
     if (state.favorites.includes(t.id)) {
       state.favorites = state.favorites.filter((id) => id !== t.id);
       saveFavs();
-    }
-    if (state.queue.includes(t.id)) {
-      state.queue = state.queue.filter((id) => id !== t.id);
-      saveQueue();
     }
     await refreshLibrary();
   });
@@ -899,12 +863,9 @@ function renderFavorites() {
       e.dataTransfer.setData(DT_FAV, id);
       e.dataTransfer.effectAllowed = "copy";
       item.classList.add("dragging");
-      // Show "drop here to remove" indicator on library while dragging fav
-      library.classList.add("drop-fav-here");
     });
     item.addEventListener("dragend", () => {
       item.classList.remove("dragging");
-      library.classList.remove("drop-fav-here");
     });
     item.addEventListener("click", (e) => {
       if (e.target.closest(".fav-item-x")) return;
@@ -951,105 +912,7 @@ favoritesSection.addEventListener("drop", (e) => {
   state.favorites.push(id); saveFavs(); renderFavorites(); renderLibrary();
 });
 
-// ============ Queue (BGM corner) ============
-function renderQueue() {
-  queueCount.textContent = state.queue.length;
-  queueRail.innerHTML = "";
-  if (state.queue.length === 0) {
-    const e = document.createElement("div");
-    e.className = "queue-empty";
-    e.innerHTML = "拖到这里排队<br>BGM 空时立即播";
-    queueRail.appendChild(e);
-    bgmDeckTT._updateHistoryButtons();
-    return;
-  }
-  state.queue.forEach((id, idx) => {
-    const t = state.lib.find((x) => x.id === id);
-    if (!t) return;
-    const item = document.createElement("div");
-    item.className = "queue-item";
-    item.title = `${t.name} — 拖动可重排序`;
-    item.draggable = true;
-    item.dataset.idx = String(idx);
-    item.addEventListener("dragstart", (e) => {
-      e.dataTransfer.setData(DT_QIDX, String(idx));
-      e.dataTransfer.effectAllowed = "move";
-      item.classList.add("dragging");
-    });
-    item.addEventListener("dragend", () => item.classList.remove("dragging"));
-    const n = document.createElement("span");
-    n.className = "queue-item-name";
-    n.textContent = t.name;
-    const x = document.createElement("button");
-    x.className = "queue-item-x";
-    x.textContent = "×";
-    x.title = "从队列移除";
-    x.addEventListener("click", (e) => {
-      e.stopPropagation();
-      state.queue.splice(idx, 1);
-      saveQueue(); renderQueue();
-    });
-    item.appendChild(n); item.appendChild(x);
-    queueRail.appendChild(item);
-  });
-  bgmDeckTT._updateHistoryButtons();
-}
-queueClearBtn.addEventListener("click", () => {
-  if (state.queue.length === 0) return;
-  state.queue = []; saveQueue(); renderQueue();
-});
-
-// Queue drop handling — accepts cards/fav (add) AND queue-idx (reorder)
-queueEl.addEventListener("dragover", (e) => {
-  if (e.dataTransfer.types.includes(DT_CARD) ||
-      e.dataTransfer.types.includes(DT_FAV) ||
-      e.dataTransfer.types.includes(DT_QIDX)) {
-    e.preventDefault();
-    e.dataTransfer.dropEffect = e.dataTransfer.types.includes(DT_QIDX) ? "move" : "copy";
-    queueEl.classList.add("drop-target");
-  }
-});
-queueEl.addEventListener("dragleave", () => queueEl.classList.remove("drop-target"));
-queueEl.addEventListener("drop", (e) => {
-  e.preventDefault();
-  queueEl.classList.remove("drop-target");
-
-  // Reorder within queue
-  const idxStr = e.dataTransfer.getData(DT_QIDX);
-  if (idxStr !== "") {
-    const srcIdx = parseInt(idxStr, 10);
-    if (Number.isFinite(srcIdx) && srcIdx >= 0 && srcIdx < state.queue.length) {
-      // Determine target index based on x position of cursor against children
-      const items = [...queueRail.querySelectorAll(".queue-item")];
-      let targetIdx = items.length;
-      for (let i = 0; i < items.length; i++) {
-        const r = items[i].getBoundingClientRect();
-        if (e.clientX < r.left + r.width / 2) { targetIdx = i; break; }
-      }
-      const [moved] = state.queue.splice(srcIdx, 1);
-      if (targetIdx > srcIdx) targetIdx--;
-      state.queue.splice(targetIdx, 0, moved);
-      saveQueue(); renderQueue();
-    }
-    return;
-  }
-
-  // Add from library / favorites
-  const id = e.dataTransfer.getData(DT_CARD) || e.dataTransfer.getData(DT_FAV);
-  if (!id) return;
-  const t = state.lib.find((x) => x.id === id);
-  if (!t) return;
-  if (t.bus !== "bgm") { toast("待播放只接受 BGM 曲目", "warn"); return; }
-  // If BGM is empty, play immediately instead of queuing.
-  if (!bgmDeckTT.track) {
-    bgmDeckTT.load(t, true);
-    return;
-  }
-  if (state.queue.includes(id)) { toast("已在队列", "warn"); return; }
-  state.queue.push(id); saveQueue(); renderQueue();
-});
-
-// ============ Library drop zone — files AND fav-removal ============
+// ============ Library drop zone — files only ============
 let _dragDepth = 0;
 libDropZone.addEventListener("dragenter", (e) => {
   // Only react to OS file drops here. fav-removal is handled by `library`
@@ -1074,27 +937,6 @@ libDropZone.addEventListener("drop", async (e) => {
   if (files.length === 0) { toast("没识别到音频文件", "warn"); return; }
   if (files.length > 1) toast(`检测到 ${files.length} 个文件，先编辑第一个`, "warn");
   openEditor(files[0]);
-});
-
-// Library wrapper handles fav-chip drops — removes from favorites.
-library.addEventListener("dragover", (e) => {
-  if (e.dataTransfer.types.includes(DT_FAV)) {
-    e.preventDefault();
-    e.dataTransfer.dropEffect = "move";
-  }
-});
-library.addEventListener("drop", (e) => {
-  if (!e.dataTransfer.types.includes(DT_FAV)) return;
-  e.preventDefault();
-  const id = e.dataTransfer.getData(DT_FAV);
-  if (!id) return;
-  const before = state.favorites.length;
-  state.favorites = state.favorites.filter((q) => q !== id);
-  if (state.favorites.length !== before) {
-    saveFavs(); renderFavorites(); renderLibrary();
-    const t = state.lib.find((x) => x.id === id);
-    toast(`已从常用移除「${t?.name || id}」`, "ok");
-  }
 });
 
 addFileBtn.addEventListener("click", () => hiddenFileInput.click());
