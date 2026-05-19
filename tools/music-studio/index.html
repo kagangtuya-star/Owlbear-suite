@@ -26,11 +26,8 @@
     <a class="studio-tab" href="../dice-studio/index.html">骰子</a>
     <a class="studio-tab active" href="./index.html">音乐</a>
   </nav>
-  <!-- Pair widget on the right of the topbar.
-       Idle: shows the link button. Waiting: shows the code (click to
-       copy). Live: shows status pill with disconnect. -->
   <div class="pair-widget" id="pairWidget">
-    <button class="btn btn--ghost btn--sm" id="pairBtn" title="生成配对码，让枭熊插件连接">🔗 配对枭熊</button>
+    <button class="btn btn--ghost btn--sm" id="pairBtn" title="生成配对码，让枭熊插件连接">配对枭熊</button>
     <div class="pair-code-chip hidden" id="pairCodeChip" title="点击复制配对码">
       <span class="pair-code-label">配对码</span>
       <span class="pair-code-value" id="pairCodeValue">------</span>
@@ -49,7 +46,7 @@
   <!-- ============ DECKS ROW ============ -->
   <section class="decks-row">
 
-    <!-- BGM hero deck -->
+    <!-- BGM hero deck: [vinyl | info | vertical-vol] -->
     <div class="bgm-deck" data-slot="bgm" data-bus="bgm">
       <div class="deck-vinyl-wrap">
         <div class="deck-vinyl" id="bgmVinyl">
@@ -76,10 +73,9 @@
           <span class="time time--dur" data-tt-dur>00:00</span>
         </div>
 
-        <!-- History row — prev/next show actual track names when available. -->
         <div class="hist-row">
           <button class="hist-btn hist-prev" data-act="prev" title="上一首">
-            <svg viewBox="0 0 16 16" fill="currentColor"><path d="M5 4v8L11 8z M3.5 4v8h1V4z" transform="scale(-1,1) translate(-16,0)"/></svg>
+            <svg viewBox="0 0 16 16" fill="currentColor"><path d="M11 4v8L5 8z M3.5 4v8h1V4z"/></svg>
             <span class="hist-name" id="histPrevName">无</span>
           </button>
           <button class="hist-btn hist-next" data-act="next" title="下一首">
@@ -96,82 +92,123 @@
           <button class="btn btn--icon btn--sm" data-act="stop" title="停止">
             <svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12"/></svg>
           </button>
-          <div class="vol-group">
-            <svg class="vol-ico" viewBox="0 0 24 24" fill="currentColor"><path d="M3 9v6h4l5 5V4L7 9zM16 12c0-1.77-1-3.29-2.5-4.03v8.05c1.5-.73 2.5-2.25 2.5-4.02z"/></svg>
-            <input type="range" class="vol-slider" min="0" max="100" value="80" data-vol>
-            <span class="vol-readout" data-vol-readout>80</span>
+          <button class="toggle-btn" id="loopToggle" title="当前 BGM 是否单曲循环">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M17 2 L21 6 L17 10"/>
+              <path d="M3 12 V10 a4 4 0 0 1 4 -4 H21"/>
+              <path d="M7 22 L3 18 L7 14"/>
+              <path d="M21 12 V14 a4 4 0 0 1 -4 4 H3"/>
+            </svg>
+            <span>单曲循环</span>
+          </button>
+          <button class="toggle-btn on" id="fadeToggle" title="切歌/启停时是否淡入淡出">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M3 18 L12 6 L12 18 Z" fill="currentColor"/>
+              <path d="M21 18 L12 6"/>
+            </svg>
+            <span>淡入淡出</span>
+          </button>
+        </div>
+
+        <!-- 待播放队列 — corner overlay at right-bottom of BGM deck.
+             Drag library cards here to queue them; first item auto-plays
+             when BGM ends (and is also playable on drop if BGM empty).
+             Queue items themselves are draggable for reorder. -->
+        <div class="queue" id="queue">
+          <div class="queue-head">
+            <span class="queue-title">待播放</span>
+            <span class="queue-count" id="queueCount">0</span>
+            <button class="queue-clear" id="queueClearBtn" title="清空">×</button>
+          </div>
+          <div class="queue-rail" id="queueRail">
+            <div class="queue-empty">拖到这里排队<br>BGM 空时立即播</div>
           </div>
         </div>
       </div>
 
-      <!-- 常用区 — corner panel inside BGM box, dashed border, lightly
-           overlapping the deck content. Drag any BGM card in to pin it
-           for quick access. Click any chip to play immediately. -->
-      <div class="favorites" id="favorites">
-        <div class="favorites-head">
-          <span class="favorites-title">⭐ 常用</span>
-          <span class="favorites-count" id="favCount">0</span>
-          <button class="favorites-clear" id="favClearBtn" title="清空">×</button>
+      <!-- BGM vertical volume bar on the right -->
+      <div class="vvol" data-bus="bgm">
+        <div class="vvol-bar" id="bgmVvBar">
+          <div class="vvol-fill" id="bgmVvFill"></div>
         </div>
-        <div class="favorites-rail" id="favRail">
-          <div class="favorites-empty">拖卡片到这里收藏 · 点击即播</div>
-        </div>
+        <span class="vvol-readout" id="bgmVvReadout">80</span>
+        <span class="vvol-label">BGM</span>
       </div>
     </div>
 
-    <!-- SFX 2x2 grid -->
-    <div class="sfx-grid">
-      <div class="sfx-pad" data-slot="sfx-0" data-bus="sfx">
-        <div class="pad-vinyl"><div class="vinyl-label"></div></div>
-        <div class="pad-meta">
-          <span class="badge badge--sfx">SFX 1</span>
-          <span class="pad-name" data-tt-name>空</span>
+    <!-- SFX card: 2x2 grid + vertical vol on the right -->
+    <div class="sfx-card">
+      <div class="sfx-grid-inner">
+        <div class="sfx-pad" data-slot="sfx-0" data-bus="sfx">
+          <div class="pad-vinyl"><div class="vinyl-label"></div></div>
+          <div class="pad-info">
+            <span class="badge badge--sfx">SFX 1</span>
+            <span class="pad-name" data-tt-name>空</span>
+            <div class="pad-controls">
+              <button class="btn btn--icon btn--xs btn--play" data-act="play"><svg class="ico-play" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg><svg class="ico-pause" viewBox="0 0 24 24" fill="currentColor"><path d="M6 4h4v16H6zm8 0h4v16h-4z"/></svg></button>
+              <button class="btn btn--icon btn--xs" data-act="stop"><svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12"/></svg></button>
+            </div>
+          </div>
         </div>
-        <div class="pad-controls">
-          <button class="btn btn--icon btn--xs btn--play" data-act="play"><svg class="ico-play" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg><svg class="ico-pause" viewBox="0 0 24 24" fill="currentColor"><path d="M6 4h4v16H6zm8 0h4v16h-4z"/></svg></button>
-          <button class="btn btn--icon btn--xs" data-act="stop"><svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12"/></svg></button>
+        <div class="sfx-pad" data-slot="sfx-1" data-bus="sfx">
+          <div class="pad-vinyl"><div class="vinyl-label"></div></div>
+          <div class="pad-info">
+            <span class="badge badge--sfx">SFX 2</span>
+            <span class="pad-name" data-tt-name>空</span>
+            <div class="pad-controls">
+              <button class="btn btn--icon btn--xs btn--play" data-act="play"><svg class="ico-play" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg><svg class="ico-pause" viewBox="0 0 24 24" fill="currentColor"><path d="M6 4h4v16H6zm8 0h4v16h-4z"/></svg></button>
+              <button class="btn btn--icon btn--xs" data-act="stop"><svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12"/></svg></button>
+            </div>
+          </div>
         </div>
-      </div>
-      <div class="sfx-pad" data-slot="sfx-1" data-bus="sfx">
-        <div class="pad-vinyl"><div class="vinyl-label"></div></div>
-        <div class="pad-meta">
-          <span class="badge badge--sfx">SFX 2</span>
-          <span class="pad-name" data-tt-name>空</span>
+        <div class="sfx-pad" data-slot="sfx-2" data-bus="sfx">
+          <div class="pad-vinyl"><div class="vinyl-label"></div></div>
+          <div class="pad-info">
+            <span class="badge badge--sfx">SFX 3</span>
+            <span class="pad-name" data-tt-name>空</span>
+            <div class="pad-controls">
+              <button class="btn btn--icon btn--xs btn--play" data-act="play"><svg class="ico-play" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg><svg class="ico-pause" viewBox="0 0 24 24" fill="currentColor"><path d="M6 4h4v16H6zm8 0h4v16h-4z"/></svg></button>
+              <button class="btn btn--icon btn--xs" data-act="stop"><svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12"/></svg></button>
+            </div>
+          </div>
         </div>
-        <div class="pad-controls">
-          <button class="btn btn--icon btn--xs btn--play" data-act="play"><svg class="ico-play" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg><svg class="ico-pause" viewBox="0 0 24 24" fill="currentColor"><path d="M6 4h4v16H6zm8 0h4v16h-4z"/></svg></button>
-          <button class="btn btn--icon btn--xs" data-act="stop"><svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12"/></svg></button>
-        </div>
-      </div>
-      <div class="sfx-pad" data-slot="sfx-2" data-bus="sfx">
-        <div class="pad-vinyl"><div class="vinyl-label"></div></div>
-        <div class="pad-meta">
-          <span class="badge badge--sfx">SFX 3</span>
-          <span class="pad-name" data-tt-name>空</span>
-        </div>
-        <div class="pad-controls">
-          <button class="btn btn--icon btn--xs btn--play" data-act="play"><svg class="ico-play" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg><svg class="ico-pause" viewBox="0 0 24 24" fill="currentColor"><path d="M6 4h4v16H6zm8 0h4v16h-4z"/></svg></button>
-          <button class="btn btn--icon btn--xs" data-act="stop"><svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12"/></svg></button>
-        </div>
-      </div>
-      <div class="sfx-pad" data-slot="sfx-3" data-bus="sfx">
-        <div class="pad-vinyl"><div class="vinyl-label"></div></div>
-        <div class="pad-meta">
-          <span class="badge badge--sfx">SFX 4</span>
-          <span class="pad-name" data-tt-name>空</span>
-        </div>
-        <div class="pad-controls">
-          <button class="btn btn--icon btn--xs btn--play" data-act="play"><svg class="ico-play" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg><svg class="ico-pause" viewBox="0 0 24 24" fill="currentColor"><path d="M6 4h4v16H6zm8 0h4v16h-4z"/></svg></button>
-          <button class="btn btn--icon btn--xs" data-act="stop"><svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12"/></svg></button>
+        <div class="sfx-pad" data-slot="sfx-3" data-bus="sfx">
+          <div class="pad-vinyl"><div class="vinyl-label"></div></div>
+          <div class="pad-info">
+            <span class="badge badge--sfx">SFX 4</span>
+            <span class="pad-name" data-tt-name>空</span>
+            <div class="pad-controls">
+              <button class="btn btn--icon btn--xs btn--play" data-act="play"><svg class="ico-play" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg><svg class="ico-pause" viewBox="0 0 24 24" fill="currentColor"><path d="M6 4h4v16H6zm8 0h4v16h-4z"/></svg></button>
+              <button class="btn btn--icon btn--xs" data-act="stop"><svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12"/></svg></button>
+            </div>
+          </div>
         </div>
       </div>
 
-      <!-- SFX shared volume slider sits below the 2x2 grid. -->
-      <div class="sfx-vol-row">
-        <span class="badge badge--sfx">SFX 总量</span>
-        <input type="range" class="vol-slider" min="0" max="100" value="100" id="sfxVolSlider">
-        <span class="vol-readout" id="sfxVolReadout">100</span>
+      <!-- SFX vertical volume bar on the right -->
+      <div class="vvol" data-bus="sfx">
+        <div class="vvol-bar" id="sfxVvBar">
+          <div class="vvol-fill" id="sfxVvFill"></div>
+        </div>
+        <span class="vvol-readout" id="sfxVvReadout">100</span>
+        <span class="vvol-label">SFX</span>
       </div>
+    </div>
+  </section>
+
+  <!-- ============ 常用库 (own section above library) ============
+       Drag library cards here → adds to favorites (does NOT play).
+       Click favorites chip OR drag it onto a turntable → play.
+       Drag favorites chip back into the library zone → removes from
+       favorites. -->
+  <section class="favorites-section" id="favoritesSection">
+    <header class="fav-head">
+      <h2>常用 <span class="fav-count" id="favCount">0</span></h2>
+      <span class="fav-hint">拖入收藏 · 拖出取消 · 点击或拖到唱片台播放</span>
+      <button class="btn btn--ghost btn--xs" id="favClearBtn">清空</button>
+    </header>
+    <div class="fav-grid" id="favGrid">
+      <div class="fav-empty">拖任意曲目到这里收藏</div>
     </div>
   </section>
 
@@ -179,16 +216,14 @@
   <section class="library">
     <header class="lib-head">
       <h2>曲库 <span class="lib-count" id="libCount">0</span></h2>
-      <input type="search" id="libSearch" placeholder="🔍 搜索…">
+      <input type="search" id="libSearch" placeholder="搜索…">
       <span class="spacer"></span>
-      <button class="btn btn--ghost btn--sm" id="loadDefaultsBtn" title="从服务器拉默认曲库（~108 MB，全部 URL 曲目）">⬇ 默认曲库</button>
+      <button class="btn btn--ghost btn--sm" id="loadDefaultsBtn" title="从服务器拉默认曲库（~108 MB）">默认曲库</button>
       <button class="btn btn--ghost btn--sm" id="addUrlBtn">+ 外链</button>
       <button class="btn btn--primary btn--sm" id="addFileBtn">+ 文件</button>
       <input type="file" id="hiddenFileInput" accept="audio/*" hidden multiple>
     </header>
 
-    <!-- Combined chip filter row (bus + tags + special 全部).
-         All chips toggle a single active filter at a time. -->
     <div class="chip-filter-row" id="chipFilterRow"></div>
 
     <div class="lib-drop-zone" id="libDropZone">
@@ -200,7 +235,7 @@
             </svg>
           </div>
           <div class="empty-title">曲库是空的</div>
-          <div class="empty-hint">把音频文件拖到这里 → 自动打开编辑器<br>或点右上「+ 文件 / + 外链」<br>或点「⬇ 默认曲库」拉服务器自带的 154 首</div>
+          <div class="empty-hint">把音频文件拖到这里 → 自动打开编辑器<br>或点右上「+ 文件 / + 外链」<br>或点「默认曲库」拉服务器自带的 154 首</div>
         </div>
       </div>
       <div class="drop-overlay">
@@ -275,7 +310,7 @@
           <span>原始大小 <b id="originalSize">--</b></span>
         </div>
         <div class="action-row">
-          <button class="btn" id="previewBtn">▶ 预览截取段</button>
+          <button class="btn" id="previewBtn">预览截取段</button>
           <button class="btn btn--primary" id="encodeBtn">压缩并加入库</button>
         </div>
         <div class="progress-row hidden" id="encodeProg">

@@ -1,24 +1,34 @@
-/* Music Board controller — v4.
+/* Music Board controller — v5.
  *
- * Changes from v3:
- *   1. Default-catalog re-import now BACKFILLS tags onto existing
- *      library entries (matched by URL) instead of skipping them.
- *   2. BGM + SFX vinyls enlarged (CSS).
- *   3. 待播放 queue → 常用 favorites: persistent custom list living
- *      in the BGM corner overlay. Click any item to play immediately;
- *      auto-pop-on-end is GONE — items persist until manually removed.
- *   4. Library card highlight clears when BGM ends naturally.
- *   5. (covered by #3)
- *   6. While paired, window.beforeunload prompts the OS native confirm
- *      dialog so the user doesn't accidentally drop the connection by
- *      closing the tab.
- *   7. WebAudio engine. Each turntable now routes through
- *        MediaElementSource → fadeGain → (duckGain for BGM) → busGain → master
- *      Master is a DynamicsCompressorNode acting as a limiter
- *      (-3 dB / 20:1 / 1 ms attack / 50 ms release). BGM auto-ducks to
- *      40 % whenever any SFX is playing; ramps back to 100 % when SFX
- *      finish. Play / stop transitions use linear gain ramps so the
- *      audio never clicks.
+ * Changes from v4 (this round):
+ *   1. 常用 promoted to its own section ABOVE the library. Dragging
+ *      into 常用 ONLY adds to favorites (no autoplay). Dragging a
+ *      favorite chip onto a turntable plays. Dragging a favorite chip
+ *      INTO the library area removes it from 常用.
+ *   2. Old 常用 corner-overlay slot is now the 待播放 queue. Drag
+ *      cards in to queue them; when BGM ends the next track in the
+ *      queue auto-plays. If BGM is empty when the drop happens, the
+ *      track plays immediately instead of going through the queue.
+ *      Queue items themselves are draggable for reorder.
+ *   3. New BGM toggles: 单曲循环 (per-track loop persisted to IDB)
+ *      and 淡入淡出 (session toggle of WebAudio fade ramps).
+ *   4. BGM + SFX volume sliders moved to vertical gradient bars on
+ *      the right edge of each deck card. SFX pad layout shifted to
+ *      [vinyl LEFT 90px] [meta + controls BELOW name].
+ *   5. New favorites/queue/toggle UI uses plain text + SVG, no
+ *      emoji decoration.
+ *
+ * Data flows:
+ *   library card drag  →  data: "application/x-obr-music-card"
+ *   favorite chip drag →  data: "application/x-obr-music-fav"
+ *   queue item drag    →  data: "application/x-obr-music-queue-idx"
+ *
+ * Drop target semantics:
+ *   turntable  ← card | fav    → load + play
+ *   queue      ← card | fav    → push to queue (or immediate play if empty)
+ *              ← queue-idx     → reorder within queue
+ *   favorites  ← card | fav    → add (no autoplay); fav same id = no-op
+ *   library    ← fav           → remove from favorites
  */
 
 import { encodeOpus, estimateOpusBytes } from "./encoder.js";
@@ -27,29 +37,47 @@ import { addTrack, updateTrack, deleteTrack, listTracks } from "./library.js";
 const $  = (s, root = document) => root.querySelector(s);
 const $$ = (s, root = document) => Array.from(root.querySelectorAll(s));
 
+const DT_CARD  = "application/x-obr-music-card";
+const DT_FAV   = "application/x-obr-music-fav";
+const DT_QIDX  = "application/x-obr-music-queue-idx";
+
 // ============ Refs ============
 const bgmDeck     = $(".bgm-deck");
 const sfxPads     = $$(".sfx-pad");
-const sfxVolSlider = $("#sfxVolSlider");
-const sfxVolReadout = $("#sfxVolReadout");
 
 const histPrevName = $("#histPrevName");
 const histNextName = $("#histNextName");
+const loopToggle  = $("#loopToggle");
+const fadeToggle  = $("#fadeToggle");
 
 const libCount    = $("#libCount");
 const libSearch   = $("#libSearch");
 const libGrid     = $("#libGrid");
 const libDropZone = $("#libDropZone");
+const library     = $(".library");
 const chipFilterRow = $("#chipFilterRow");
 const addFileBtn  = $("#addFileBtn");
 const addUrlBtn   = $("#addUrlBtn");
 const hiddenFileInput = $("#hiddenFileInput");
 const loadDefaultsBtn = $("#loadDefaultsBtn");
 
-const favorites      = $("#favorites");
-const favRail        = $("#favRail");
-const favCount       = $("#favCount");
-const favClearBtn    = $("#favClearBtn");
+const favoritesSection = $("#favoritesSection");
+const favGrid       = $("#favGrid");
+const favCount      = $("#favCount");
+const favClearBtn   = $("#favClearBtn");
+
+const queueEl       = $("#queue");
+const queueRail     = $("#queueRail");
+const queueCount    = $("#queueCount");
+const queueClearBtn = $("#queueClearBtn");
+
+// Vertical volume controls
+const bgmVvBar     = $("#bgmVvBar");
+const bgmVvFill    = $("#bgmVvFill");
+const bgmVvReadout = $("#bgmVvReadout");
+const sfxVvBar     = $("#sfxVvBar");
+const sfxVvFill    = $("#sfxVvFill");
+const sfxVvReadout = $("#sfxVvReadout");
 
 const pairBtn       = $("#pairBtn");
 const pairCodeChip  = $("#pairCodeChip");
@@ -99,58 +127,53 @@ const toastStack = $("#toastStack");
 
 // ============ State ============
 const state = {
-  editor: {
-    file: null, audioBuffer: null,
-    trim: { start: 0, end: 0 },
-    bitrate: 64, channels: 1, bus: "bgm",
-    preview: null,
-  },
+  editor: { file: null, audioBuffer: null, trim: { start: 0, end: 0 }, bitrate: 64, channels: 1, bus: "bgm", preview: null },
   urlBus: "bgm",
   lib: [],
   filter: { kind: "all" },
   libSearchStr: "",
   volumes: { bgm: 0.8, sfx: 1.0 },
   turntableTrack: { "bgm": null, "sfx-0": null, "sfx-1": null, "sfx-2": null, "sfx-3": null },
-  bgmHistory: [],
-  bgmHistoryIdx: -1,
-  favorites: [],          // [trackId] — persistent custom list
+  bgmHistory: [], bgmHistoryIdx: -1,
+  favorites: [],         // [trackId] — persistent
+  queue:    [],          // [trackId] — auto-pop on BGM end
   tagEditId: null,
+  fadeEnabled: true,     // session toggle
 };
 
-const LS_VOL  = "obr-music-board:volumes";
-const LS_FAVS = "obr-music-board:favorites";
+const LS_VOL   = "obr-music-board:volumes";
+const LS_FAVS  = "obr-music-board:favorites";
+const LS_QUEUE = "obr-music-board:queue";
+const LS_FADE  = "obr-music-board:fade-enabled";
 try {
   const v = JSON.parse(localStorage.getItem(LS_VOL) || "{}");
   if (typeof v.bgm === "number") state.volumes.bgm = v.bgm;
   if (typeof v.sfx === "number") state.volumes.sfx = v.sfx;
 } catch {}
 try {
-  // Migrate old "obr-music-board:queue" key → favorites (kept as a
-  // best-effort one-time conversion; safe to leave even after).
-  const oldQ = localStorage.getItem("obr-music-board:queue");
-  if (oldQ && !localStorage.getItem(LS_FAVS)) {
-    localStorage.setItem(LS_FAVS, oldQ);
-  }
-  const q = JSON.parse(localStorage.getItem(LS_FAVS) || "[]");
-  if (Array.isArray(q)) state.favorites = q.filter((x) => typeof x === "string");
+  const f = JSON.parse(localStorage.getItem(LS_FAVS) || "[]");
+  if (Array.isArray(f)) state.favorites = f.filter((x) => typeof x === "string");
+} catch {}
+try {
+  const q = JSON.parse(localStorage.getItem(LS_QUEUE) || "[]");
+  if (Array.isArray(q)) state.queue = q.filter((x) => typeof x === "string");
+} catch {}
+try {
+  const fd = localStorage.getItem(LS_FADE);
+  if (fd === "0") state.fadeEnabled = false;
 } catch {}
 function saveVolumes() { try { localStorage.setItem(LS_VOL, JSON.stringify(state.volumes)); } catch {} }
 function saveFavs()    { try { localStorage.setItem(LS_FAVS, JSON.stringify(state.favorites)); } catch {} }
+function saveQueue()   { try { localStorage.setItem(LS_QUEUE, JSON.stringify(state.queue)); } catch {} }
+function saveFade()    { try { localStorage.setItem(LS_FADE, state.fadeEnabled ? "1" : "0"); } catch {} }
 
 // ============ WebAudio master ============
-// Single AudioContext shared by all turntables + editor preview. Lazy-
-// created on first user interaction so we don't trip the autoplay
-// policy block. Each turntable's HTMLAudioElement is routed through
-// its own node chain into MASTER_LIMITER → ctx.destination.
 let audioCtx = null;
 let MASTER_LIMITER = null;
 function getCtx() {
   if (!audioCtx) {
     audioCtx = new (window.AudioContext || window.webkitAudioContext)();
     MASTER_LIMITER = audioCtx.createDynamicsCompressor();
-    // Limiter-ish settings — high ratio + low threshold + fast attack
-    // catch overlapping-SFX peaks without audible compression artifacts
-    // on regular content.
     MASTER_LIMITER.threshold.value = -3;
     MASTER_LIMITER.ratio.value = 20;
     MASTER_LIMITER.attack.value = 0.001;
@@ -230,19 +253,15 @@ class Turntable {
     this.stopBtn = $('[data-act="stop"]', el);
     this.prevBtn = $('[data-act="prev"]', el);
     this.nextBtn = $('[data-act="next"]', el);
-    this.volSlider = $('[data-vol]', el);
-    this.volReadout = $('[data-vol-readout]', el);
 
     this.audio = new Audio();
     this.audio.preload = "auto";
     this.audio.crossOrigin = "anonymous";
     this.track = null;
 
-    // WebAudio nodes — created on first play() since AudioContext
-    // can't be safely instantiated before a user gesture.
     this.sourceNode = null;
     this.fadeGain = null;
-    this.duckGain = null;   // BGM only
+    this.duckGain = null;
     this.busGain = null;
 
     this._wire();
@@ -255,7 +274,7 @@ class Turntable {
     const ctx = getCtx();
     this.sourceNode = ctx.createMediaElementSource(this.audio);
     this.fadeGain = ctx.createGain();
-    this.fadeGain.gain.value = 0;          // start silent — we ramp in
+    this.fadeGain.gain.value = 0;
     this.busGain  = ctx.createGain();
     this.busGain.gain.value = state.volumes[this.bus];
     if (this.bus === "bgm") {
@@ -265,19 +284,21 @@ class Turntable {
     } else {
       this.sourceNode.connect(this.fadeGain).connect(this.busGain).connect(MASTER_LIMITER);
     }
-    // HTMLAudioElement.volume is locked to 1 — gain stage handles all
-    // volume control so AudioContext suspended state still mutes correctly.
     this.audio.volume = 1;
   }
 
-  /** Linear-ramp the fadeGain to a target, returns a Promise that
-   *  resolves after the ramp completes. */
   _ramp(target, ms) {
+    if (!state.fadeEnabled) {
+      // Instant gain change — skip the ramp UI entirely.
+      const ctx = getCtx();
+      this.fadeGain.gain.cancelScheduledValues(ctx.currentTime);
+      this.fadeGain.gain.setValueAtTime(target, ctx.currentTime);
+      return Promise.resolve();
+    }
     const ctx = getCtx();
-    const t   = ctx.currentTime;
-    const dt  = ms / 1000;
+    const t = ctx.currentTime;
+    const dt = ms / 1000;
     this.fadeGain.gain.cancelScheduledValues(t);
-    // Anchor at the current value so we ramp smoothly even mid-ramp.
     const cur = this.fadeGain.gain.value;
     this.fadeGain.gain.setValueAtTime(cur, t);
     this.fadeGain.gain.linearRampToValueAtTime(target, t + dt);
@@ -296,37 +317,30 @@ class Turntable {
         this.audio.currentTime = ((e.clientX - r.left) / r.width) * this.audio.duration;
       });
     }
-    if (this.volSlider) {
-      this.volSlider.value = String(Math.round(state.volumes[this.bus] * 100));
-      if (this.volReadout) this.volReadout.textContent = this.volSlider.value;
-      this.volSlider.addEventListener("input", () => {
-        state.volumes[this.bus] = Number(this.volSlider.value) / 100;
-        saveVolumes();
-        if (this.volReadout) this.volReadout.textContent = this.volSlider.value;
-        for (const tt of TURNTABLES) if (tt.bus === this.bus) tt._applyVolume();
-        sendToObr({ type: "volume", bus: this.bus, vol: state.volumes[this.bus] });
-      });
-    }
     this.audio.addEventListener("ended", () => {
-      // Loop is handled by HTMLAudioElement natively; we get this
-      // event only for non-loop tracks. Just clear all state.
       if (!this.audio.loop) {
         this._setSpinning(false);
         this._syncPlayUI();
-        // Clear card highlight in the library
+        // BGM: auto-advance from queue head
+        if (this.bus === "bgm" && state.queue.length > 0) {
+          const nextId = state.queue.shift();
+          saveQueue(); renderQueue();
+          const t = state.lib.find((x) => x.id === nextId);
+          if (t) { this.load(t, true); return; }
+        }
         this.track = null;
         state.turntableTrack[this.slot] = null;
         if (this.nameEl) this.nameEl.textContent = this.bus === "bgm" ? "-- 空闲 --" : "空";
         if (this.bus === "bgm") this._updateHistoryButtons();
-        renderLibrary();
-        renderFavorites();
+        renderLibrary(); renderFavorites();
         updateDucking();
+        syncLoopToggleUi();
       }
     });
 
-    // Drop target for library cards
+    // Drop target — accepts library cards AND favorite chips
     this.el.addEventListener("dragover", (e) => {
-      if (e.dataTransfer.types.includes("application/x-obr-music-card")) {
+      if (e.dataTransfer.types.includes(DT_CARD) || e.dataTransfer.types.includes(DT_FAV)) {
         e.preventDefault();
         e.dataTransfer.dropEffect = "copy";
         this.el.classList.add("drop-target");
@@ -336,7 +350,7 @@ class Turntable {
     this.el.addEventListener("drop", (e) => {
       e.preventDefault();
       this.el.classList.remove("drop-target");
-      const id = e.dataTransfer.getData("application/x-obr-music-card");
+      const id = e.dataTransfer.getData(DT_CARD) || e.dataTransfer.getData(DT_FAV);
       if (id) {
         const t = state.lib.find((x) => x.id === id);
         if (t) this.load(t, true);
@@ -354,8 +368,6 @@ class Turntable {
   }
 
   async load(track, autoplay = true) {
-    // If we're currently playing, fade out the old source briefly
-    // before switching `.src` so the transition isn't a click.
     if (this.track && !this.audio.paused && this.fadeGain) {
       await this._ramp(0, FADE_OUT_MS);
     }
@@ -368,6 +380,7 @@ class Turntable {
     if (this.bus === "bgm") {
       this._pushHistory(track);
       this._updateHistoryButtons();
+      syncLoopToggleUi();
     }
     if (autoplay) {
       try {
@@ -383,8 +396,7 @@ class Turntable {
         toast("播放失败：" + (e?.message || e), "error");
       }
     }
-    renderLibrary();
-    renderFavorites();
+    renderLibrary(); renderFavorites();
 
     if (this.bus === "bgm") {
       sendToObr({
@@ -395,10 +407,8 @@ class Turntable {
       if (!track.url) toast("本地压缩文件无法分享给其他玩家。请使用在线直链。", "warn");
     } else {
       sendToObr({
-        type: "sfx-add",
-        id: crypto.randomUUID(),
-        url: track.url || "",
-        name: track.name, loop: !!track.loop,
+        type: "sfx-add", id: crypto.randomUUID(),
+        url: track.url || "", name: track.name, loop: !!track.loop,
       });
     }
   }
@@ -429,7 +439,6 @@ class Turntable {
         toast("播放失败：" + (e?.message || e), "error");
       }
     } else {
-      // Fade out, THEN pause — so the gain ramp is audible.
       await this._ramp(0, FADE_OUT_MS);
       this.audio.pause();
       this._setSpinning(false);
@@ -437,10 +446,7 @@ class Turntable {
       updateDucking();
     }
     if (this.bus === "bgm") {
-      sendToObr({
-        type: wasPaused ? "bgm-play" : "bgm-pause",
-        position: this.audio.currentTime,
-      });
+      sendToObr({ type: wasPaused ? "bgm-play" : "bgm-pause", position: this.audio.currentTime });
     }
   }
 
@@ -459,9 +465,8 @@ class Turntable {
     if (this.curEl)  this.curEl.textContent = "00:00";
     if (this.durEl)  this.durEl.textContent = "00:00";
     if (this.fillEl) this.fillEl.style.width = "0%";
-    if (this.bus === "bgm") this._updateHistoryButtons();
-    renderLibrary();
-    renderFavorites();
+    if (this.bus === "bgm") { this._updateHistoryButtons(); syncLoopToggleUi(); }
+    renderLibrary(); renderFavorites();
     updateDucking();
     if (wasBgm) sendToObr({ type: "bgm-stop" });
   }
@@ -475,7 +480,6 @@ class Turntable {
     const playing = this.track && !this.audio.paused;
     this.playBtn.classList.toggle("is-playing", !!playing);
   }
-
   _pushHistory(track) {
     const h = state.bgmHistory;
     const cur = h[state.bgmHistoryIdx];
@@ -515,6 +519,9 @@ class Turntable {
         const id = state.bgmHistory[state.bgmHistoryIdx + 1].id;
         const t = state.lib.find((x) => x.id === id);
         histNextName.textContent = t ? trunc(t.name) : "下一首";
+      } else if (state.queue.length > 0) {
+        const t = state.lib.find((x) => x.id === state.queue[0]);
+        histNextName.textContent = t ? trunc(t.name) : "(队列)";
       } else { histNextName.textContent = "无"; }
     }
   }
@@ -524,50 +531,95 @@ function turntableFor(slot) { return TURNTABLES.find((t) => t.slot === slot); }
 function findEmptySfx() { return TURNTABLES.find((t) => t.bus === "sfx" && !t.track); }
 const bgmDeckTT = turntableFor("bgm");
 
-// SFX shared volume slider
-if (sfxVolSlider) {
-  sfxVolSlider.value = String(Math.round(state.volumes.sfx * 100));
-  if (sfxVolReadout) sfxVolReadout.textContent = sfxVolSlider.value;
-  sfxVolSlider.addEventListener("input", () => {
-    state.volumes.sfx = Number(sfxVolSlider.value) / 100;
-    saveVolumes();
-    if (sfxVolReadout) sfxVolReadout.textContent = sfxVolSlider.value;
-    for (const tt of TURNTABLES) if (tt.bus === "sfx") tt._applyVolume();
-    sendToObr({ type: "volume", bus: "sfx", vol: state.volumes.sfx });
-  });
+// ============ Loop + Fade toggles ============
+function syncLoopToggleUi() {
+  const tt = bgmDeckTT;
+  const on = !!(tt.track && tt.audio.loop);
+  loopToggle.classList.toggle("on", on);
 }
+loopToggle.addEventListener("click", async () => {
+  const tt = bgmDeckTT;
+  if (!tt.track) { toast("BGM 唱片台空闲", "warn"); return; }
+  const newLoop = !tt.audio.loop;
+  tt.audio.loop = newLoop;
+  tt.track.loop = newLoop;
+  try { await updateTrack(tt.track.id, { loop: newLoop }); } catch {}
+  syncLoopToggleUi();
+  // Re-render so the library card's loop badge / future loads pick up
+  // the change.
+  for (const t of state.lib) if (t.id === tt.track.id) t.loop = newLoop;
+  sendToObr({ type: "bgm-load",
+    url: tt.track.url || "", name: tt.track.name, loop: newLoop,
+    position: tt.audio.currentTime || 0,
+  });
+});
+fadeToggle.classList.toggle("on", state.fadeEnabled);
+fadeToggle.addEventListener("click", () => {
+  state.fadeEnabled = !state.fadeEnabled;
+  saveFade();
+  fadeToggle.classList.toggle("on", state.fadeEnabled);
+  toast(`淡入淡出 ${state.fadeEnabled ? "开" : "关"}`, "ok");
+});
+
+// ============ Vertical volume bars ============
+function bindVerticalVol(bar, fill, readout, bus) {
+  // Update visual from state on init.
+  const sync = () => {
+    const pct = Math.round(state.volumes[bus] * 100);
+    fill.style.height = pct + "%";
+    if (readout) readout.textContent = String(pct);
+  };
+  sync();
+  let dragging = false;
+  function pickFromEvent(e) {
+    const r = bar.getBoundingClientRect();
+    const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+    const ratio = Math.max(0, Math.min(1, (r.bottom - clientY) / r.height));
+    state.volumes[bus] = ratio;
+    saveVolumes();
+    sync();
+    for (const tt of TURNTABLES) if (tt.bus === bus) tt._applyVolume();
+    sendToObr({ type: "volume", bus, vol: ratio });
+  }
+  bar.addEventListener("pointerdown", (e) => {
+    dragging = true;
+    bar.setPointerCapture(e.pointerId);
+    pickFromEvent(e);
+  });
+  bar.addEventListener("pointermove", (e) => { if (dragging) pickFromEvent(e); });
+  bar.addEventListener("pointerup", (e) => {
+    dragging = false;
+    try { bar.releasePointerCapture(e.pointerId); } catch {}
+  });
+  bar.addEventListener("pointercancel", () => { dragging = false; });
+  // Wheel: ± 5 %
+  bar.addEventListener("wheel", (e) => {
+    e.preventDefault();
+    state.volumes[bus] = Math.max(0, Math.min(1, state.volumes[bus] + (e.deltaY < 0 ? 0.05 : -0.05)));
+    saveVolumes(); sync();
+    for (const tt of TURNTABLES) if (tt.bus === bus) tt._applyVolume();
+    sendToObr({ type: "volume", bus, vol: state.volumes[bus] });
+  }, { passive: false });
+  // External update hook (e.g. setting changed from elsewhere — unused now).
+  return sync;
+}
+bindVerticalVol(bgmVvBar, bgmVvFill, bgmVvReadout, "bgm");
+bindVerticalVol(sfxVvBar, sfxVvFill, sfxVvReadout, "sfx");
 
 // ============ Auto-ducking ============
-// When ANY SFX pad is currently playing, the BGM duckGain ramps down
-// to 40 % over 400 ms. When all SFX stop, it ramps back to 100 % over
-// 800 ms. Pure client-side — no protocol changes.
 function updateDucking() {
   const bgmTT = bgmDeckTT;
   if (!bgmTT.duckGain) return;
-  const sfxActive = TURNTABLES.some((tt) =>
-    tt.bus === "sfx" && tt.track && !tt.audio.paused);
+  const sfxActive = TURNTABLES.some((tt) => tt.bus === "sfx" && tt.track && !tt.audio.paused);
   const ctx = getCtx();
   const t = ctx.currentTime;
   const cur = bgmTT.duckGain.gain.value;
   bgmTT.duckGain.gain.cancelScheduledValues(t);
   bgmTT.duckGain.gain.setValueAtTime(cur, t);
-  bgmTT.duckGain.gain.linearRampToValueAtTime(
-    sfxActive ? 0.4 : 1.0,
-    t + (sfxActive ? 0.4 : 0.8),
-  );
+  bgmTT.duckGain.gain.linearRampToValueAtTime(sfxActive ? 0.4 : 1.0, t + (sfxActive ? 0.4 : 0.8));
 }
 
 // ============ Library ============
-//
-// `refreshLibrary` runs an auto-dedup pass first. Heals the case where
-// users imported the default catalog multiple times before import
-// dedup was bulletproof (early rounds), AND prevents any future
-// double-add from leaving lingering duplicates around.
-//
-// Dedup rule: same URL → merge into the OLDEST entry (preserves user-
-// authored tags that built up over time), union all tags, repoint any
-// turntable / favorite / history reference pointing at the duplicates.
-
 function findDuplicatesByUrl(tracks) {
   const byUrl = new Map();
   for (const t of tracks) {
@@ -575,23 +627,16 @@ function findDuplicatesByUrl(tracks) {
     if (!byUrl.has(t.url)) byUrl.set(t.url, []);
     byUrl.get(t.url).push(t);
   }
-  const deletes = [];
-  const tagUpdates = new Map();
-  const rewrite = new Map();   // dupId → primaryId
+  const deletes = [], tagUpdates = new Map(), rewrite = new Map();
   for (const [, group] of byUrl) {
     if (group.length < 2) continue;
     group.sort((a, b) => (a.ts || 0) - (b.ts || 0));
     const primary = group[0];
-    // Union all tags across the group into the primary entry.
     const tagSet = new Set();
     for (const g of group) for (const tag of (g.tags || [])) tagSet.add(tag);
     const merged = [...tagSet];
-    const sameTags = JSON.stringify(merged) === JSON.stringify(primary.tags || []);
-    if (!sameTags) tagUpdates.set(primary.id, merged);
-    for (const dup of group.slice(1)) {
-      deletes.push(dup.id);
-      rewrite.set(dup.id, primary.id);
-    }
+    if (JSON.stringify(merged) !== JSON.stringify(primary.tags || [])) tagUpdates.set(primary.id, merged);
+    for (const dup of group.slice(1)) { deletes.push(dup.id); rewrite.set(dup.id, primary.id); }
   }
   return { deletes, tagUpdates, rewrite };
 }
@@ -599,66 +644,61 @@ function findDuplicatesByUrl(tracks) {
 async function refreshLibrary() {
   let raw = await listTracks();
   const dups = findDuplicatesByUrl(raw);
-
   if (dups.deletes.length > 0) {
-    // Apply IDB-side mutations (sequential so a failure mid-batch
-    // doesn't leave half-applied state).
     for (const [primaryId, tags] of dups.tagUpdates) {
       try { await updateTrack(primaryId, { tags }); } catch (e) { console.warn(e); }
     }
     for (const id of dups.deletes) {
       try { await deleteTrack(id); } catch (e) { console.warn(e); }
     }
-
-    // Repoint in-memory references so the user doesn't see stale UI
-    // (a turntable showing a "deleted" track, a favorite that points
-    // at a non-existent id, a history entry that no longer resolves).
     for (const [dupId, primaryId] of dups.rewrite) {
-      // turntables: track id pointer + the live track object
       for (const slot of Object.keys(state.turntableTrack)) {
         if (state.turntableTrack[slot] === dupId) state.turntableTrack[slot] = primaryId;
       }
       for (const tt of TURNTABLES) {
-        if (tt.track?.id === dupId) {
-          tt.track = raw.find((x) => x.id === primaryId) || tt.track;
-        }
+        if (tt.track?.id === dupId) tt.track = raw.find((x) => x.id === primaryId) || tt.track;
       }
-      // favorites: rewrite, but if primary already present just drop the dup slot
-      const i = state.favorites.indexOf(dupId);
-      if (i >= 0) {
-        if (state.favorites.includes(primaryId)) state.favorites.splice(i, 1);
-        else state.favorites[i] = primaryId;
+      const fi = state.favorites.indexOf(dupId);
+      if (fi >= 0) {
+        if (state.favorites.includes(primaryId)) state.favorites.splice(fi, 1);
+        else state.favorites[fi] = primaryId;
       }
-      // BGM history rewrite
-      for (const h of state.bgmHistory) {
-        if (h.id === dupId) h.id = primaryId;
+      const qi = state.queue.indexOf(dupId);
+      if (qi >= 0) {
+        if (state.queue.includes(primaryId)) state.queue.splice(qi, 1);
+        else state.queue[qi] = primaryId;
       }
+      for (const h of state.bgmHistory) if (h.id === dupId) h.id = primaryId;
     }
-    // Collapse adjacent identical history entries created by the rewrite
     const ch = [];
     for (const h of state.bgmHistory) {
       if (ch.length === 0 || ch[ch.length - 1].id !== h.id) ch.push(h);
     }
     state.bgmHistory = ch;
     if (state.bgmHistoryIdx >= ch.length) state.bgmHistoryIdx = ch.length - 1;
-    saveFavs();
+    saveFavs(); saveQueue();
     toast(`库自动去重：移除 ${dups.deletes.length} 个同 URL 重复条目`, "ok");
-
     raw = await listTracks();
   }
-
   state.lib = raw.map((t) => ({ tags: [], ...t }));
+  // Prune favorites / queue against deleted ids
+  const ids = new Set(state.lib.map((t) => t.id));
+  const fBefore = state.favorites.length, qBefore = state.queue.length;
+  state.favorites = state.favorites.filter((id) => ids.has(id));
+  state.queue     = state.queue.filter((id) => ids.has(id));
+  if (state.favorites.length !== fBefore) saveFavs();
+  if (state.queue.length     !== qBefore) saveQueue();
   renderLibrary();
   renderFavorites();
+  renderQueue();
   bgmDeckTT._updateHistoryButtons();
+  syncLoopToggleUi();
 }
+
 function visibleTracks() {
   let arr = state.lib;
-  if (state.filter.kind === "bus") {
-    arr = arr.filter((t) => t.bus === state.filter.value);
-  } else if (state.filter.kind === "tag") {
-    arr = arr.filter((t) => (t.tags || []).includes(state.filter.value));
-  }
+  if (state.filter.kind === "bus") arr = arr.filter((t) => t.bus === state.filter.value);
+  else if (state.filter.kind === "tag") arr = arr.filter((t) => (t.tags || []).includes(state.filter.value));
   if (state.libSearchStr) {
     const q = state.libSearchStr.toLowerCase();
     arr = arr.filter((t) =>
@@ -680,7 +720,7 @@ function renderLibrary() {
     if (state.lib.length === 0) {
       e.innerHTML = `<div class="empty-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3"/></svg></div>
         <div class="empty-title">曲库是空的</div>
-        <div class="empty-hint">把音频文件拖到这里 → 自动打开编辑器<br>或点右上「+ 文件 / + 外链」<br>或点「⬇ 默认曲库」拉服务器自带的 154 首</div>`;
+        <div class="empty-hint">把音频文件拖到这里 → 自动打开编辑器<br>或点右上「+ 文件 / + 外链」<br>或点「默认曲库」拉服务器自带的 154 首</div>`;
     } else {
       e.innerHTML = `<div class="empty-title">没有匹配的曲目</div>`;
     }
@@ -689,7 +729,6 @@ function renderLibrary() {
   }
   for (const t of arr) libGrid.appendChild(makeCard(t));
 }
-
 function renderChipFilter() {
   const tagCounts = new Map();
   let bgmN = 0, sfxN = 0;
@@ -717,8 +756,7 @@ function renderChipFilter() {
     state.filter.kind === "bus" && state.filter.value === "sfx",
     () => { state.filter = { kind: "bus", value: "sfx" }; renderLibrary(); },
     sfxN));
-  const tags = [...tagCounts.entries()].sort((a, b) =>
-    b[1] - a[1] || a[0].localeCompare(b[0], "zh"));
+  const tags = [...tagCounts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], "zh"));
   for (const [name, n] of tags) {
     chipFilterRow.appendChild(mk(name, "chip--tag",
       state.filter.kind === "tag" && state.filter.value === name,
@@ -732,15 +770,16 @@ const PLAYING_IDS = () => new Set(Object.values(state.turntableTrack).filter(Boo
 function makeCard(t) {
   const playing = PLAYING_IDS().has(t.id);
   const localOnly = !!t.blob && !t.url;
+  const inFavorites = state.favorites.includes(t.id);
   const card = document.createElement("div");
   card.className = "lib-card"
     + (playing ? " is-playing" : "")
-    + (localOnly ? " local-only" : "");
+    + (localOnly ? " local-only" : "")
+    + (inFavorites ? " is-favorite" : "");
   card.draggable = true;
   card.dataset.id = t.id;
-
   card.addEventListener("dragstart", (e) => {
-    e.dataTransfer.setData("application/x-obr-music-card", t.id);
+    e.dataTransfer.setData(DT_CARD, t.id);
     e.dataTransfer.effectAllowed = "copy";
     card.classList.add("dragging");
   });
@@ -761,7 +800,7 @@ function makeCard(t) {
       t.name = n;
       await updateTrack(t.id, { name: n });
       for (const tt of TURNTABLES) if (tt.track?.id === t.id && tt.nameEl) tt.nameEl.textContent = n;
-      renderFavorites();
+      renderFavorites(); renderQueue();
     } else { name.textContent = t.name; }
   });
   name.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); name.blur(); } });
@@ -776,7 +815,7 @@ function makeCard(t) {
   if (localOnly) {
     const warn = document.createElement("button");
     warn.className = "card-corner-btn warn";
-    warn.textContent = "⚠";
+    warn.textContent = "!";
     warn.title = "本地压缩文件，无法分享给其他玩家。请使用在线直链。";
     corner.appendChild(warn);
   }
@@ -792,6 +831,10 @@ function makeCard(t) {
     if (state.favorites.includes(t.id)) {
       state.favorites = state.favorites.filter((id) => id !== t.id);
       saveFavs();
+    }
+    if (state.queue.includes(t.id)) {
+      state.queue = state.queue.filter((id) => id !== t.id);
+      saveQueue();
     }
     await refreshLibrary();
   });
@@ -831,15 +874,15 @@ function playOnBestTarget(t) {
   else (findEmptySfx() || turntableFor("sfx-0")).load(t, true);
 }
 
-// ============ Favorites ============
+// ============ Favorites (own section) ============
 function renderFavorites() {
   favCount.textContent = state.favorites.length;
-  favRail.innerHTML = "";
+  favGrid.innerHTML = "";
   if (state.favorites.length === 0) {
     const e = document.createElement("div");
-    e.className = "favorites-empty";
-    e.textContent = "拖卡片到这里收藏 · 点击即播";
-    favRail.appendChild(e);
+    e.className = "fav-empty";
+    e.textContent = "拖任意曲目到这里收藏";
+    favGrid.appendChild(e);
     return;
   }
   const playingIds = PLAYING_IDS();
@@ -849,10 +892,22 @@ function renderFavorites() {
     const isPlaying = playingIds.has(id);
     const item = document.createElement("div");
     item.className = "fav-item" + (isPlaying ? " is-playing" : "");
-    item.title = isPlaying ? "正在播放，再点一次停止" : `点击播放: ${t.name}`;
+    item.title = isPlaying ? "正在播放，再点一次停止" : `点击或拖到唱片台播放：${t.name}`;
+    item.draggable = true;
+    item.dataset.id = id;
+    item.addEventListener("dragstart", (e) => {
+      e.dataTransfer.setData(DT_FAV, id);
+      e.dataTransfer.effectAllowed = "copy";
+      item.classList.add("dragging");
+      // Show "drop here to remove" indicator on library while dragging fav
+      library.classList.add("drop-fav-here");
+    });
+    item.addEventListener("dragend", () => {
+      item.classList.remove("dragging");
+      library.classList.remove("drop-fav-here");
+    });
     item.addEventListener("click", (e) => {
       if (e.target.closest(".fav-item-x")) return;
-      // Clicking a favorite plays it immediately on the BGM/SFX deck.
       playOnBestTarget(t);
     });
     const n = document.createElement("span");
@@ -865,47 +920,140 @@ function renderFavorites() {
     x.addEventListener("click", (e) => {
       e.stopPropagation();
       state.favorites = state.favorites.filter((q) => q !== id);
-      saveFavs(); renderFavorites();
+      saveFavs(); renderFavorites(); renderLibrary();
     });
     item.appendChild(n); item.appendChild(x);
-    favRail.appendChild(item);
+    favGrid.appendChild(item);
   }
 }
 favClearBtn.addEventListener("click", () => {
   if (state.favorites.length === 0) return;
   if (!confirm(`清空常用列表（${state.favorites.length} 首）？`)) return;
-  state.favorites = []; saveFavs(); renderFavorites();
+  state.favorites = []; saveFavs(); renderFavorites(); renderLibrary();
 });
 
-// Drop target for the favorites panel
-favorites.addEventListener("dragover", (e) => {
-  if (e.dataTransfer.types.includes("application/x-obr-music-card")) {
+// Drop target on favorites section — accepts cards (add) but does NOT play.
+favoritesSection.addEventListener("dragover", (e) => {
+  if (e.dataTransfer.types.includes(DT_CARD)) {
     e.preventDefault();
     e.dataTransfer.dropEffect = "copy";
-    favorites.classList.add("drop-target");
+    favoritesSection.classList.add("drop-target");
   }
 });
-favorites.addEventListener("dragleave", () => favorites.classList.remove("drop-target"));
-favorites.addEventListener("drop", (e) => {
+favoritesSection.addEventListener("dragleave", () => favoritesSection.classList.remove("drop-target"));
+favoritesSection.addEventListener("drop", (e) => {
+  if (!e.dataTransfer.types.includes(DT_CARD)) return;
   e.preventDefault();
-  favorites.classList.remove("drop-target");
-  const id = e.dataTransfer.getData("application/x-obr-music-card");
+  favoritesSection.classList.remove("drop-target");
+  const id = e.dataTransfer.getData(DT_CARD);
+  if (!id) return;
+  if (state.favorites.includes(id)) { toast("已在常用", "warn"); return; }
+  state.favorites.push(id); saveFavs(); renderFavorites(); renderLibrary();
+});
+
+// ============ Queue (BGM corner) ============
+function renderQueue() {
+  queueCount.textContent = state.queue.length;
+  queueRail.innerHTML = "";
+  if (state.queue.length === 0) {
+    const e = document.createElement("div");
+    e.className = "queue-empty";
+    e.innerHTML = "拖到这里排队<br>BGM 空时立即播";
+    queueRail.appendChild(e);
+    bgmDeckTT._updateHistoryButtons();
+    return;
+  }
+  state.queue.forEach((id, idx) => {
+    const t = state.lib.find((x) => x.id === id);
+    if (!t) return;
+    const item = document.createElement("div");
+    item.className = "queue-item";
+    item.title = `${t.name} — 拖动可重排序`;
+    item.draggable = true;
+    item.dataset.idx = String(idx);
+    item.addEventListener("dragstart", (e) => {
+      e.dataTransfer.setData(DT_QIDX, String(idx));
+      e.dataTransfer.effectAllowed = "move";
+      item.classList.add("dragging");
+    });
+    item.addEventListener("dragend", () => item.classList.remove("dragging"));
+    const n = document.createElement("span");
+    n.className = "queue-item-name";
+    n.textContent = t.name;
+    const x = document.createElement("button");
+    x.className = "queue-item-x";
+    x.textContent = "×";
+    x.title = "从队列移除";
+    x.addEventListener("click", (e) => {
+      e.stopPropagation();
+      state.queue.splice(idx, 1);
+      saveQueue(); renderQueue();
+    });
+    item.appendChild(n); item.appendChild(x);
+    queueRail.appendChild(item);
+  });
+  bgmDeckTT._updateHistoryButtons();
+}
+queueClearBtn.addEventListener("click", () => {
+  if (state.queue.length === 0) return;
+  state.queue = []; saveQueue(); renderQueue();
+});
+
+// Queue drop handling — accepts cards/fav (add) AND queue-idx (reorder)
+queueEl.addEventListener("dragover", (e) => {
+  if (e.dataTransfer.types.includes(DT_CARD) ||
+      e.dataTransfer.types.includes(DT_FAV) ||
+      e.dataTransfer.types.includes(DT_QIDX)) {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = e.dataTransfer.types.includes(DT_QIDX) ? "move" : "copy";
+    queueEl.classList.add("drop-target");
+  }
+});
+queueEl.addEventListener("dragleave", () => queueEl.classList.remove("drop-target"));
+queueEl.addEventListener("drop", (e) => {
+  e.preventDefault();
+  queueEl.classList.remove("drop-target");
+
+  // Reorder within queue
+  const idxStr = e.dataTransfer.getData(DT_QIDX);
+  if (idxStr !== "") {
+    const srcIdx = parseInt(idxStr, 10);
+    if (Number.isFinite(srcIdx) && srcIdx >= 0 && srcIdx < state.queue.length) {
+      // Determine target index based on x position of cursor against children
+      const items = [...queueRail.querySelectorAll(".queue-item")];
+      let targetIdx = items.length;
+      for (let i = 0; i < items.length; i++) {
+        const r = items[i].getBoundingClientRect();
+        if (e.clientX < r.left + r.width / 2) { targetIdx = i; break; }
+      }
+      const [moved] = state.queue.splice(srcIdx, 1);
+      if (targetIdx > srcIdx) targetIdx--;
+      state.queue.splice(targetIdx, 0, moved);
+      saveQueue(); renderQueue();
+    }
+    return;
+  }
+
+  // Add from library / favorites
+  const id = e.dataTransfer.getData(DT_CARD) || e.dataTransfer.getData(DT_FAV);
   if (!id) return;
   const t = state.lib.find((x) => x.id === id);
   if (!t) return;
-  if (state.favorites.includes(id)) {
-    toast("已在常用列表中", "warn");
+  if (t.bus !== "bgm") { toast("待播放只接受 BGM 曲目", "warn"); return; }
+  // If BGM is empty, play immediately instead of queuing.
+  if (!bgmDeckTT.track) {
+    bgmDeckTT.load(t, true);
     return;
   }
-  state.favorites.push(id); saveFavs(); renderFavorites();
+  if (state.queue.includes(id)) { toast("已在队列", "warn"); return; }
+  state.queue.push(id); saveQueue(); renderQueue();
 });
 
-// ============ Library search ============
-libSearch.addEventListener("input", () => { state.libSearchStr = libSearch.value.trim(); renderLibrary(); });
-
-// ============ File drop on library → editor ============
+// ============ Library drop zone — files AND fav-removal ============
 let _dragDepth = 0;
 libDropZone.addEventListener("dragenter", (e) => {
+  // Only react to OS file drops here. fav-removal is handled by `library`
+  // wrapper below (which fires for the bigger area).
   if (!e.dataTransfer.types.includes("Files")) return;
   e.preventDefault(); _dragDepth++; libDropZone.classList.add("drag-over");
 });
@@ -914,7 +1062,9 @@ libDropZone.addEventListener("dragleave", () => {
   if (_dragDepth === 0) libDropZone.classList.remove("drag-over");
 });
 libDropZone.addEventListener("dragover", (e) => {
-  if (e.dataTransfer.types.includes("Files")) { e.preventDefault(); e.dataTransfer.dropEffect = "copy"; }
+  if (e.dataTransfer.types.includes("Files")) {
+    e.preventDefault(); e.dataTransfer.dropEffect = "copy";
+  }
 });
 libDropZone.addEventListener("drop", async (e) => {
   if (!e.dataTransfer.types.includes("Files")) return;
@@ -925,11 +1075,34 @@ libDropZone.addEventListener("drop", async (e) => {
   if (files.length > 1) toast(`检测到 ${files.length} 个文件，先编辑第一个`, "warn");
   openEditor(files[0]);
 });
+
+// Library wrapper handles fav-chip drops — removes from favorites.
+library.addEventListener("dragover", (e) => {
+  if (e.dataTransfer.types.includes(DT_FAV)) {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+  }
+});
+library.addEventListener("drop", (e) => {
+  if (!e.dataTransfer.types.includes(DT_FAV)) return;
+  e.preventDefault();
+  const id = e.dataTransfer.getData(DT_FAV);
+  if (!id) return;
+  const before = state.favorites.length;
+  state.favorites = state.favorites.filter((q) => q !== id);
+  if (state.favorites.length !== before) {
+    saveFavs(); renderFavorites(); renderLibrary();
+    const t = state.lib.find((x) => x.id === id);
+    toast(`已从常用移除「${t?.name || id}」`, "ok");
+  }
+});
+
 addFileBtn.addEventListener("click", () => hiddenFileInput.click());
 hiddenFileInput.addEventListener("change", () => {
   if (hiddenFileInput.files?.[0]) openEditor(hiddenFileInput.files[0]);
   hiddenFileInput.value = "";
 });
+libSearch.addEventListener("input", () => { state.libSearchStr = libSearch.value.trim(); renderLibrary(); });
 
 // ============ Editor modal ============
 function openEditor(file) {
@@ -1092,7 +1265,7 @@ previewBtn.addEventListener("click", async () => {
   const len = Math.max(0, state.editor.trim.end - state.editor.trim.start);
   src.start(0, off, len);
   state.editor.preview = src;
-  previewBtn.textContent = "■ 停止预览";
+  previewBtn.textContent = "停止预览";
   playCursor.classList.add("playing");
   const t0 = getCtx().currentTime;
   const tick = () => {
@@ -1108,7 +1281,7 @@ previewBtn.addEventListener("click", async () => {
 });
 function stopPreview() {
   if (state.editor.preview) { try { state.editor.preview.stop(); } catch {} state.editor.preview = null; }
-  previewBtn.textContent = "▶ 预览截取段";
+  previewBtn.textContent = "预览截取段";
   playCursor.classList.remove("playing");
 }
 
@@ -1165,9 +1338,7 @@ addUrlBtn.addEventListener("click", () => {
   setTimeout(() => urlInput.focus(), 30);
 });
 urlModal.addEventListener("click", (e) => { if (e.target.matches("[data-close]")) urlModal.classList.add("hidden"); });
-urlInput.addEventListener("input", () => {
-  urlAddBtn.disabled = !/^https?:\/\//i.test(urlInput.value.trim());
-});
+urlInput.addEventListener("input", () => { urlAddBtn.disabled = !/^https?:\/\//i.test(urlInput.value.trim()); });
 urlInput.addEventListener("keydown", (e) => { if (e.key === "Enter" && !urlAddBtn.disabled) urlAddBtn.click(); });
 urlAddBtn.addEventListener("click", async () => {
   const url = urlInput.value.trim();
@@ -1224,18 +1395,8 @@ tagSaveBtn.addEventListener("click", async () => {
   await refreshLibrary();
 });
 
-// ============ Default catalog ============
-//
-// On click: pull manifest, then for every track in it:
-//   • NEW  (URL not in library) → addTrack
-//   • EXISTING (URL match)      → UPDATE the entry's tags from the
-//                                 manifest, MERGING with any user-
-//                                 authored tags the user may have
-//                                 already added locally.
-// Fixes the case where the user imported the catalog BEFORE folder
-// tags landed — re-clicking now backfills them without duplicating.
+// ============ Default catalog import ============
 const MANIFEST_URL = "https://obr.dnd.center/music/manifest.json";
-
 loadDefaultsBtn.addEventListener("click", async () => {
   loadDefaultsBtn.disabled = true;
   loadDefaultsBtn.textContent = "拉取中…";
@@ -1245,11 +1406,8 @@ loadDefaultsBtn.addEventListener("click", async () => {
     const data = await r.json();
     const tracks = Array.isArray(data?.tracks) ? data.tracks : [];
     if (tracks.length === 0) { toast("默认曲库还是空的", "warn"); return; }
-
-    // Index local lib by URL for O(1) match.
     const byUrl = new Map();
     for (const t of state.lib) if (t.url) byUrl.set(t.url, t);
-
     let added = 0, updated = 0, unchanged = 0;
     for (const t of tracks) {
       if (!t.url) continue;
@@ -1257,17 +1415,13 @@ loadDefaultsBtn.addEventListener("click", async () => {
       const desiredTags = incomingTags.length > 0 ? [...incomingTags, "默认"] : ["默认"];
       const existing = byUrl.get(t.url);
       if (existing) {
-        // Merge: union desired with existing tags (preserve user adds).
-        const seen = new Set();
-        const merged = [];
+        const seen = new Set(), merged = [];
         for (const g of [...(existing.tags || []), ...desiredTags]) {
           if (!seen.has(g)) { seen.add(g); merged.push(g); }
         }
         const sameTags = JSON.stringify(merged) === JSON.stringify(existing.tags || []);
-        if (!sameTags) {
-          await updateTrack(existing.id, { tags: merged });
-          updated++;
-        } else { unchanged++; }
+        if (!sameTags) { await updateTrack(existing.id, { tags: merged }); updated++; }
+        else { unchanged++; }
       } else {
         await addTrack({
           id:       crypto.randomUUID(),
@@ -1299,14 +1453,13 @@ loadDefaultsBtn.addEventListener("click", async () => {
     toast(`无法加载默认曲库：${e?.message || e}`, "error");
   } finally {
     loadDefaultsBtn.disabled = false;
-    loadDefaultsBtn.textContent = "⬇ 默认曲库";
+    loadDefaultsBtn.textContent = "默认曲库";
   }
 });
 
 // ============================================================
 // ====================== PAIRING (PeerJS) ====================
 // ============================================================
-
 const PEER_PREFIX = "obr-music-";
 let _peer = null;
 let _peerConn = null;
@@ -1318,18 +1471,15 @@ function genPairCode() {
   for (let i = 0; i < 6; i++) c += chars[Math.floor(Math.random() * chars.length)];
   return c;
 }
-function setPairUi(state) {
-  pairBtn.classList.toggle("hidden", state !== "idle");
-  pairCodeChip.classList.toggle("hidden", state !== "waiting");
-  pairLiveChip.classList.toggle("hidden", state !== "live");
-  if (state === "waiting") pairCodeValue.textContent = _pairCode;
+function setPairUi(s) {
+  pairBtn.classList.toggle("hidden", s !== "idle");
+  pairCodeChip.classList.toggle("hidden", s !== "waiting");
+  pairLiveChip.classList.toggle("hidden", s !== "live");
+  if (s === "waiting") pairCodeValue.textContent = _pairCode;
 }
-
 pairBtn.addEventListener("click", () => void startPairing());
 pairCancelBtn.addEventListener("click", () => tearDownPair());
-pairUnpairBtn.addEventListener("click", () => {
-  if (confirm("确定断开与枭熊的连接？")) tearDownPair();
-});
+pairUnpairBtn.addEventListener("click", () => { if (confirm("确定断开与枭熊的连接？")) tearDownPair(); });
 pairCodeChip.addEventListener("click", async (e) => {
   if (e.target.closest(".pair-code-x")) return;
   try {
@@ -1339,7 +1489,6 @@ pairCodeChip.addEventListener("click", async (e) => {
     toast(`配对码：${_pairCode}（手动复制）`, "warn");
   }
 });
-
 async function startPairing() {
   if (_peer) return;
   try {
@@ -1348,9 +1497,7 @@ async function startPairing() {
     _pairCode = genPairCode();
     setPairUi("waiting");
     _peer = new Peer(PEER_PREFIX + _pairCode);
-    _peer.on("open", () => {
-      toast(`配对码 ${_pairCode} 已就绪，等枭熊插件连接…`, "ok");
-    });
+    _peer.on("open", () => { toast(`配对码 ${_pairCode} 已就绪，等枭熊插件连接…`, "ok"); });
     _peer.on("connection", (conn) => {
       _peerConn = conn;
       conn.on("open", () => {
@@ -1374,20 +1521,17 @@ async function startPairing() {
     tearDownPair();
   }
 }
-
 function tearDownPair() {
   if (_peerConn) try { _peerConn.close(); } catch {}
   if (_peer) try { _peer.destroy(); } catch {}
   _peer = null; _peerConn = null; _pairCode = "";
   setPairUi("idle");
 }
-
 function sendToObr(msg) {
   if (_peerConn && _peerConn.open) {
     try { _peerConn.send(msg); } catch (e) { console.warn("[pair] send failed", e); }
   }
 }
-
 function broadcastCurrentState() {
   sendToObr({ type: "volume", bus: "bgm", vol: state.volumes.bgm });
   sendToObr({ type: "volume", bus: "sfx", vol: state.volumes.sfx });
@@ -1399,26 +1543,14 @@ function broadcastCurrentState() {
       loop: !!bgm.track.loop,
       position: bgm.audio.currentTime || 0,
     });
-    if (bgm.audio.paused) {
-      sendToObr({ type: "bgm-pause", position: bgm.audio.currentTime || 0 });
-    }
+    if (bgm.audio.paused) sendToObr({ type: "bgm-pause", position: bgm.audio.currentTime || 0 });
   }
   for (const tt of TURNTABLES) {
     if (tt.bus !== "sfx" || !tt.track || !tt.track.url || tt.audio.paused) continue;
-    sendToObr({
-      type: "sfx-add",
-      id: crypto.randomUUID(),
-      url: tt.track.url, name: tt.track.name, loop: !!tt.track.loop,
-    });
+    sendToObr({ type: "sfx-add", id: crypto.randomUUID(), url: tt.track.url, name: tt.track.name, loop: !!tt.track.loop });
   }
 }
 
-// ============ beforeunload guard ============
-// When the studio is paired with the枭熊 plugin, close/refresh of
-// this tab tears down the WebRTC channel, leaving the plugin (and
-// all OBR players) silently stuck at the last metadata snapshot.
-// Show the browser-native "Leave site?" confirm so the user has to
-// acknowledge before disconnecting.
 window.addEventListener("beforeunload", (e) => {
   if (_peerConn && _peerConn.open) {
     e.preventDefault();
