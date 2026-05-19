@@ -118,14 +118,14 @@
       <div class="stage-wrap">
         <div class="stage-bg" id="stageBg">
           <div class="fake-token" id="fakeToken"></div>
-          <canvas id="stageCanvas" width="256" height="256"></canvas>
+          <canvas id="stageCanvas" width="500" height="500"></canvas>
           <div class="stage-overlay" id="stageOverlay"></div>
         </div>
       </div>
       <div class="stage-foot">
         <label class="chk"><input type="checkbox" id="showToken" checked> 显示参考 token</label>
         <label class="chk"><input type="checkbox" id="loopPlay" checked> 循环播放预览</label>
-        <span class="stage-meta" id="stageMeta">256 × 256 · 30fps · 1.5s</span>
+        <span class="stage-meta" id="stageMeta">500 × 500 · 30fps · 1.5s</span>
       </div>
       <!-- Preview-only backdrop. Blend modes (滤色 / 正片叠底 / 相加发光)
            need pixels below the layer to actually show an effect. The
@@ -165,8 +165,8 @@
       <div class="param-list">
         <label class="param">
           <span>画布大小</span>
-          <input type="number" id="canvasW" min="32" max="1024" step="16" value="256"> ×
-          <input type="number" id="canvasH" min="32" max="1024" step="16" value="256"> px
+          <input type="number" id="canvasW" min="32" max="1024" step="4" value="500"> ×
+          <input type="number" id="canvasH" min="32" max="1024" step="4" value="500"> px
         </label>
         <label class="param">
           <span>时长 (秒)</span>
