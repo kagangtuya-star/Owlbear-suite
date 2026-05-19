@@ -34,7 +34,8 @@ export type ModuleId =
   | "fullFog"
   | "trickster"
   | "circleImage"
-  | "follow";
+  | "follow"
+  | "musicBoard";
 
 export type DataVersion = "2014" | "2024" | "all";
 export type Language = "zh" | "en";
@@ -201,6 +202,11 @@ export const DEFAULT_STATE: SuiteState = {
     // registered as a module in background.ts. modules/follow/ source
     // is kept on disk un-wired in case it's revived.
     follow: false,
+    // Music board — dev-only listener page that mirrors the studio
+    // web tool's playback into OBR scene metadata, so all players
+    // hear synchronised audio. Hidden in stable (STABLE_HIDES) until
+    // PeerJS pairing UX + default catalog land.
+    musicBoard: !STABLE_HIDES,
   },
   dataVersion: "2024",
   allowPlayerMonsters: false,

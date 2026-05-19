@@ -22,6 +22,7 @@ import { setupStatusTracker, teardownStatusTracker } from "./modules/statusTrack
 import { setupHpBar, teardownHpBar } from "./modules/hpBar";
 import { setupMetadataInspector, teardownMetadataInspector } from "./modules/metadata-inspector";
 import { setupFullFog, teardownFullFog } from "./modules/fullFog";
+import { setupMusicBoard, teardownMusicBoard } from "./modules/musicBoard";
 import { setupCrossSceneCards } from "./modules/cross-scene-cards";
 import { setupPerfWindow } from "./modules/perfWindow";
 import { assetUrl } from "./asset-base";
@@ -595,12 +596,18 @@ const modules: Partial<Record<keyof ReturnType<typeof getState>["enabled"], Modu
   trickster: { setup: setupTrickster, teardown: teardownTrickster },
   circleImage: { setup: setupCircleImage, teardown: teardownCircleImage },
   // fullFog stays dev-only — door / window cutting still in design.
+  // musicBoard is dev-only until the studio web tool + default catalog
+  // are mature (PeerJS pairing + auto-sync to scene metadata).
   ...(STABLE_HIDES
     ? {}
     : {
         fullFog: {
           setup: async () => { await setupFullFog(); },
           teardown: async () => { await teardownFullFog(); },
+        },
+        musicBoard: {
+          setup: async () => { await setupMusicBoard(); },
+          teardown: async () => { teardownMusicBoard(); },
         },
         // 2026-05-14 — `follow` removed here per user request.
       }),

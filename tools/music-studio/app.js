@@ -869,10 +869,178 @@ exportAllBtn.addEventListener("click", () => {
   openShareCode(arr);
 });
 
-// ============ Pairing (Phase 2 stub) ============
+// ============ Pairing (PeerJS WebRTC bridge to OBR plugin) ============
+//
+// We're the "host" — the user picks "配对" → we generate a 6-char code,
+// register our peer id as "obr-music-XXXXXX" on PeerJS public signaling,
+// wait for the枭熊 plugin to connect by id. Once connected, every
+// playback control here fires a small message over the data channel.
+// Plugin translates to OBR scene metadata writes → all players sync.
+
+const PEER_PREFIX = "obr-music-";
+let _peer = null;
+let _peerConn = null;
+let _pairCode = "";
+
+function genPairCode() {
+  // 6-char code, no easily-confused chars (no 0/O/1/I/L)
+  const chars = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
+  let c = "";
+  for (let i = 0; i < 6; i++) c += chars[Math.floor(Math.random() * chars.length)];
+  return c;
+}
+
+function setPairState(state /* "idle" | "waiting" | "live" | "error" */, msg) {
+  if (!pairBtn) return;
+  pairBtn.classList.remove("btn--primary", "btn--ghost");
+  switch (state) {
+    case "idle":
+      pairBtn.textContent = "🔗 配对枭熊";
+      pairBtn.classList.add("btn--ghost");
+      break;
+    case "waiting":
+      pairBtn.textContent = `等待 ${_pairCode}…`;
+      pairBtn.classList.add("btn--ghost");
+      pairBtn.style.color = "var(--accent-warm)";
+      break;
+    case "live":
+      pairBtn.textContent = "● 已连接";
+      pairBtn.classList.add("btn--ghost");
+      pairBtn.style.color = "var(--green)";
+      break;
+    case "error":
+      pairBtn.textContent = "✗ " + (msg || "失败");
+      pairBtn.classList.add("btn--ghost");
+      pairBtn.style.color = "var(--red)";
+      break;
+  }
+}
+
+async function startPairing() {
+  if (_peer) {
+    // Already paired or pairing — show the code and let user disconnect
+    if (_peerConn) {
+      const yes = confirm(`已连接到枭熊。断开连接？`);
+      if (yes) tearDownPair();
+      return;
+    } else {
+      // Waiting — show code again
+      alert(`配对码：${_pairCode}\n\n在枭熊插件的音乐板页面输入这个码。`);
+      return;
+    }
+  }
+  try {
+    const m = await import("https://esm.sh/peerjs@1.5.4");
+    const Peer = m.default ?? m.Peer;
+    _pairCode = genPairCode();
+    setPairState("waiting");
+    _peer = new Peer(PEER_PREFIX + _pairCode);
+    _peer.on("open", () => {
+      // Code is registered — show it to the user
+      alert(`配对码：${_pairCode}\n\n在枭熊插件的「音乐板」页面输入这个码，点「连接」。\n本窗口保持打开。`);
+    });
+    _peer.on("connection", (conn) => {
+      _peerConn = conn;
+      conn.on("open", () => {
+        setPairState("live");
+        toast("枭熊已连接 — 现在播放/暂停会同步到 OBR 所有玩家", "ok");
+      });
+      conn.on("close", () => {
+        _peerConn = null;
+        setPairState("waiting");
+        toast("枭熊断开连接", "warn");
+      });
+      conn.on("error", (e) => toast("数据通道错误：" + (e?.message || e), "error"));
+    });
+    _peer.on("error", (e) => {
+      setPairState("error", e?.type || "");
+      toast("配对失败：" + (e?.type || e?.message || e), "error");
+      _peer = null;
+    });
+  } catch (e) {
+    setPairState("error", "加载失败");
+    toast("加载 PeerJS 失败：" + (e?.message || e), "error");
+  }
+}
+
+function tearDownPair() {
+  if (_peerConn) try { _peerConn.close(); } catch {}
+  if (_peer) try { _peer.destroy(); } catch {}
+  _peer = null; _peerConn = null;
+  setPairState("idle");
+}
+
+/** Send a message to枭熊 if we're paired. No-op when not. */
+function sendToObr(msg) {
+  if (_peerConn && _peerConn.open) {
+    try { _peerConn.send(msg); } catch (e) { console.warn("[pair] send failed", e); }
+  }
+}
+
 if (pairBtn) {
-  pairBtn.addEventListener("click", () => {
-    toast("配对功能下一轮实装（PeerJS WebRTC → 枭熊插件实时同步播放/暂停/换曲）", "warn");
+  pairBtn.addEventListener("click", () => void startPairing());
+  setPairState("idle");
+}
+
+// ============ Hook into turntable events to broadcast ============
+//
+// Monkey-patch Turntable.load / togglePlay / stop / volume change so
+// they also fire sendToObr() — keeps the OBR mirror state in sync.
+
+const origLoad = Turntable.prototype.load;
+Turntable.prototype.load = function (track, autoplay) {
+  origLoad.call(this, track, autoplay);
+  if (this.bus === "bgm") {
+    sendToObr({
+      type: "bgm-load",
+      url: track.url || "",   // blob tracks can't be sent over PeerJS — only URL tracks sync
+      name: track.name,
+      loop: !!track.loop,
+      position: 0,
+    });
+    if (!track.url) toast("本地压缩文件无法分享给 OBR（需要先有 URL）。试试外链曲目。", "warn");
+  } else {
+    // SFX — generate a one-shot id per play
+    sendToObr({
+      type: "sfx-add",
+      id: crypto.randomUUID(),
+      url: track.url || "",
+      name: track.name,
+      loop: !!track.loop,
+    });
+  }
+};
+
+const origTogglePlay = Turntable.prototype.togglePlay;
+Turntable.prototype.togglePlay = function () {
+  const wasPaused = this.audio.paused;
+  origTogglePlay.call(this);
+  if (this.bus !== "bgm" || !this.track) return;
+  if (wasPaused) {
+    sendToObr({ type: "bgm-play", position: this.audio.currentTime });
+  } else {
+    sendToObr({ type: "bgm-pause", position: this.audio.currentTime });
+  }
+};
+
+const origStop = Turntable.prototype.stop;
+Turntable.prototype.stop = function () {
+  const wasBgm = this.bus === "bgm" && this.track;
+  origStop.call(this);
+  if (wasBgm) sendToObr({ type: "bgm-stop" });
+};
+
+// Volume slider changes → broadcast
+for (const tt of TURNTABLES) {
+  if (tt.volSlider) {
+    tt.volSlider.addEventListener("change", () => {
+      sendToObr({ type: "volume", bus: tt.bus, vol: state.volumes[tt.bus] });
+    });
+  }
+}
+if (sfxVolSlider) {
+  sfxVolSlider.addEventListener("change", () => {
+    sendToObr({ type: "volume", bus: "sfx", vol: state.volumes.sfx });
   });
 }
 

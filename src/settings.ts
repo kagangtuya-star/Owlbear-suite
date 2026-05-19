@@ -2980,6 +2980,7 @@ function moduleLabelKey(id: ModuleId): string {
     case "trickster": return lang === "zh" ? "捣蛋鬼在哪？" : "Trickster Marker";
     case "circleImage": return lang === "zh" ? "圆形图片" : "Circle Image";
     case "follow": return lang === "zh" ? "跟随" : "Follow";
+    case "musicBoard": return lang === "zh" ? "音乐板" : "Music Board";
   }
 }
 

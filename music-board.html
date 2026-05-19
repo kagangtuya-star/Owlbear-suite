@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<title>音乐板</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{
+  --bg:#0a0c14; --bg-1:#11141d; --bg-2:#181c27; --bg-3:#1f2433;
+  --line:rgba(255,255,255,0.08); --line-2:rgba(255,255,255,0.16);
+  --text:#eaeef5; --text-2:#adb3c1; --text-3:#6e7588;
+  --accent:#4ad6c7; --accent-2:#5cf0de;
+  --bgm-color:#4ad6c7; --sfx-color:#c184ff;
+  --green:#5cd97c; --red:#ff6b6b; --yellow:#ffd66b;
+}
+html,body{
+  margin:0;height:100%;
+  background:
+    radial-gradient(circle at 10% 0%, rgba(74,214,199,0.05), transparent 50%),
+    var(--bg);
+  color:var(--text);
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif;
+  font-size:13px;line-height:1.5;
+}
+.app{padding:14px;display:flex;flex-direction:column;gap:12px;max-width:560px;margin:0 auto}
+
+/* === now playing card === */
+.np-card{
+  display:grid;grid-template-columns:auto 1fr;gap:14px;align-items:center;
+  padding:14px;
+  background:linear-gradient(135deg,var(--bg-2),var(--bg-1));
+  border:1px solid var(--line);
+  border-radius:12px;
+  position:relative;overflow:hidden;
+}
+.np-card.playing{border-color:rgba(74,214,199,0.40)}
+.np-card.playing::before{
+  content:'';position:absolute;inset:0;
+  background:radial-gradient(circle at 15% 50%,rgba(74,214,199,0.12),transparent 60%);
+  pointer-events:none;
+}
+
+.np-vinyl{
+  width:80px;height:80px;border-radius:50%;
+  position:relative;flex-shrink:0;
+  background:
+    repeating-radial-gradient(circle,#1a1a1a 0px,#0a0a0a 1.3px,#0e0e0e 2.6px),
+    radial-gradient(circle at 35% 35%,#2a2a2a 0%,#0a0a0a 70%);
+  box-shadow:inset 0 0 12px rgba(0,0,0,0.85),0 3px 8px rgba(0,0,0,0.5);
+}
+.np-vinyl::before{
+  content:'';position:absolute;inset:30%;border-radius:50%;
+  background:radial-gradient(circle,var(--bgm-color) 0%,#1f5e57 100%);
+}
+.np-vinyl::after{
+  content:'';position:absolute;top:50%;left:50%;
+  width:4px;height:4px;margin:-2px 0 0 -2px;
+  background:#000;border-radius:50%;z-index:2;
+}
+.np-card.playing .np-vinyl{animation:spin 3.2s linear infinite}
+@keyframes spin{from{transform:rotate(0)}to{transform:rotate(360deg)}}
+
+.np-info{display:flex;flex-direction:column;gap:6px;min-width:0;position:relative;z-index:1}
+.np-status{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--text-3);text-transform:uppercase;letter-spacing:1px;font-weight:600}
+.np-status .dot{width:7px;height:7px;border-radius:50%;background:var(--text-3)}
+.np-card.playing .np-status .dot{background:var(--accent);box-shadow:0 0 6px var(--accent);animation:pulse 1.5s ease-in-out infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.5}}
+.np-title{font-size:15px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.np-time{font-family:ui-monospace,monospace;font-size:11px;color:var(--text-3)}
+
+/* === sfx row === */
+.sfx-list{display:flex;flex-wrap:wrap;gap:6px;min-height:34px}
+.sfx-chip{
+  display:inline-flex;align-items:center;gap:6px;
+  padding:5px 10px;
+  background:var(--bg-2);
+  border:1px solid var(--line);
+  border-radius:999px;
+  font-size:11.5px;color:var(--text-2);
+}
+.sfx-chip.active{
+  border-color:var(--sfx-color);
+  background:linear-gradient(135deg,rgba(193,132,255,0.12),var(--bg-2));
+  color:var(--text);
+}
+.sfx-chip .ico{
+  width:7px;height:7px;border-radius:50%;
+  background:var(--text-3);
+}
+.sfx-chip.active .ico{background:var(--sfx-color);box-shadow:0 0 4px var(--sfx-color);animation:pulse 1.4s ease-in-out infinite}
+.sfx-empty{color:var(--text-3);font-size:11.5px;padding:8px 0}
+
+/* === volumes === */
+.vol-section{
+  padding:12px 14px;
+  background:var(--bg-1);
+  border:1px solid var(--line);
+  border-radius:10px;
+  display:flex;flex-direction:column;gap:10px;
+}
+.vol-row{display:flex;align-items:center;gap:10px;font-size:12px;color:var(--text-2)}
+.vol-row .lbl{flex-shrink:0;width:44px;display:flex;align-items:center;gap:5px}
+.vol-row .lbl .badge{padding:1px 6px;border-radius:999px;font-size:9.5px;font-weight:700;letter-spacing:0.6px}
+.badge--bgm{background:rgba(74,214,199,0.15);color:var(--bgm-color)}
+.badge--sfx{background:rgba(193,132,255,0.15);color:var(--sfx-color)}
+.vol-slider{
+  flex:1;appearance:none;-webkit-appearance:none;
+  height:4px;background:var(--bg-3);border-radius:999px;cursor:pointer;
+}
+.vol-slider::-webkit-slider-thumb{
+  -webkit-appearance:none;appearance:none;
+  width:14px;height:14px;background:var(--accent);
+  border-radius:50%;cursor:pointer;
+}
+.vol-slider::-moz-range-thumb{width:14px;height:14px;background:var(--accent);border-radius:50%;border:none;cursor:pointer}
+.vol-readout{font-family:ui-monospace,monospace;font-size:11px;color:var(--text-3);min-width:30px;text-align:right}
+
+.mute-row{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-2);cursor:pointer;user-select:none}
+.mute-row input{accent-color:var(--accent)}
+
+/* === pair === */
+.pair-section{
+  padding:12px 14px;
+  background:var(--bg-1);
+  border:1px solid var(--line);
+  border-radius:10px;
+}
+.pair-head{
+  display:flex;align-items:center;justify-content:space-between;gap:10px;
+  margin-bottom:8px;
+}
+.pair-title{font-size:12px;font-weight:600;color:var(--text-2);letter-spacing:0.3px}
+.pair-status{
+  font-size:10.5px;padding:2px 7px;border-radius:999px;
+  background:var(--bg-3);color:var(--text-3);font-weight:600;letter-spacing:0.5px;
+}
+.pair-status.live{background:rgba(92,217,124,0.15);color:var(--green)}
+.pair-status.connecting{background:rgba(255,214,107,0.15);color:var(--yellow)}
+.pair-status.error{background:rgba(255,107,107,0.15);color:var(--red)}
+.pair-controls{display:flex;align-items:center;gap:8px}
+.pair-code{
+  flex:1;padding:7px 10px;
+  background:var(--bg-2);border:1px solid var(--line);border-radius:6px;
+  color:var(--text);font-family:ui-monospace,monospace;font-size:13px;
+  letter-spacing:2px;text-align:center;text-transform:uppercase;
+}
+.pair-code:focus{outline:none;border-color:var(--accent)}
+.btn{
+  padding:7px 13px;background:var(--bg-3);color:var(--text);
+  border:1px solid var(--line-2);border-radius:6px;
+  font-size:12px;font-weight:500;cursor:pointer;
+  transition:background .15s,border-color .15s,color .15s;
+  white-space:nowrap;
+}
+.btn:hover:not(:disabled){background:var(--bg-2);border-color:var(--accent);color:var(--accent)}
+.btn:disabled{opacity:0.4;cursor:not-allowed}
+.btn--primary{
+  background:linear-gradient(180deg,var(--accent-2),var(--accent));
+  color:#062018;border-color:var(--accent);font-weight:600;
+}
+.btn--primary:hover:not(:disabled){background:linear-gradient(180deg,#74ffea,var(--accent-2))}
+.pair-hint{margin-top:8px;font-size:11px;color:var(--text-3);line-height:1.6}
+.pair-hint code{
+  background:var(--bg-2);padding:1px 5px;border-radius:3px;
+  color:var(--accent);font-family:ui-monospace,monospace;font-size:10.5px;
+}
+.pair-hint a{color:var(--accent);text-decoration:none}
+.pair-hint a:hover{text-decoration:underline}
+
+/* === empty === */
+.empty-state{
+  text-align:center;padding:30px 16px;color:var(--text-3);
+}
+.empty-state .empty-vinyl{
+  width:60px;height:60px;border-radius:50%;margin:0 auto 10px;
+  background:repeating-radial-gradient(circle,#1a1a1a 0px,#0a0a0a 1.2px,#0e0e0e 2.4px),radial-gradient(circle at 35% 35%,#2a2a2a 0%,#0a0a0a 70%);
+  box-shadow:inset 0 0 8px rgba(0,0,0,0.8);opacity:0.6;
+}
+.empty-state .empty-title{font-size:13px;color:var(--text-2);margin-bottom:4px}
+.empty-state .empty-hint{font-size:11.5px;line-height:1.7}
+
+/* === toast === */
+.toast-stack{position:fixed;bottom:14px;right:14px;z-index:50;display:flex;flex-direction:column;gap:5px;pointer-events:none}
+.toast{padding:7px 12px;background:var(--bg-3);border:1px solid var(--line-2);border-radius:6px;font-size:11.5px;animation:t-in .2s ease-out}
+.toast.ok{border-color:var(--green);color:var(--green)}
+.toast.warn{border-color:var(--yellow);color:var(--yellow)}
+.toast.error{border-color:var(--red);color:var(--red)}
+@keyframes t-in{from{transform:translateY(8px);opacity:0}to{transform:none;opacity:1}}
+</style>
+</head>
+<body>
+<div class="app">
+  <!-- Now playing -->
+  <div class="np-card" id="npCard">
+    <div class="np-vinyl"></div>
+    <div class="np-info">
+      <div class="np-status">
+        <span class="dot"></span>
+        <span id="npStatus">空闲</span>
+      </div>
+      <div class="np-title" id="npTitle">没有 BGM 在播放</div>
+      <div class="np-time" id="npTime">--:-- / --:--</div>
+    </div>
+  </div>
+
+  <!-- SFX list -->
+  <div class="sfx-list" id="sfxList">
+    <div class="sfx-empty">没有活跃音效</div>
+  </div>
+
+  <!-- Volumes (per-client local) -->
+  <div class="vol-section">
+    <div class="vol-row">
+      <div class="lbl"><span class="badge badge--bgm">BGM</span></div>
+      <input type="range" class="vol-slider" id="bgmVol" min="0" max="100" value="80">
+      <span class="vol-readout" id="bgmVolReadout">80</span>
+    </div>
+    <div class="vol-row">
+      <div class="lbl"><span class="badge badge--sfx">SFX</span></div>
+      <input type="range" class="vol-slider" id="sfxVol" min="0" max="100" value="100">
+      <span class="vol-readout" id="sfxVolReadout">100</span>
+    </div>
+    <label class="mute-row">
+      <input type="checkbox" id="muteChk">
+      <span>静音（仅自己）</span>
+    </label>
+  </div>
+
+  <!-- Pair section -->
+  <div class="pair-section">
+    <div class="pair-head">
+      <span class="pair-title">🔗 接入网页音乐板</span>
+      <span class="pair-status" id="pairStatus">未连接</span>
+    </div>
+    <div class="pair-controls">
+      <input type="text" class="pair-code" id="pairCode" placeholder="网页那边的 6 位配对码" maxlength="9">
+      <button class="btn btn--primary" id="pairBtn">连接</button>
+      <button class="btn" id="unpairBtn" style="display:none">断开</button>
+    </div>
+    <div class="pair-hint" id="pairHint">
+      在 <a href="https://obr.dnd.center/studio/music-studio/" target="_blank">obr.dnd.center/studio/music-studio/</a> 点「🔗 配对枭熊」拿到配对码，粘到这里。<br>
+      连接后网页里的所有播放/暂停操作会同步到 OBR，所有玩家都能听见。
+    </div>
+  </div>
+</div>
+
+<div class="toast-stack" id="toastStack"></div>
+
+<script type="module" src="./src/music-board-page.ts"></script>
+</body>
+</html>
