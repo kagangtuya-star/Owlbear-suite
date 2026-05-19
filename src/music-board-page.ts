@@ -1,21 +1,27 @@
 /* Music Board plugin popover.
  *
- * Owns audio + PeerJS DIRECTLY (engine-in-background was abandoned
- * because the background iframe can't resume its AudioContext without
- * a user gesture in that document — and the background has no UI).
+ * Audio + PeerJS DIRECTLY (background engine attempt was abandoned —
+ * background iframe can't resume its AudioContext without a user
+ * gesture in that document, and the background has no UI).
  *
- * Closing the popover therefore stops music. To preserve music while
- * dismissing the panel, use the in-popover "minimize" button: it
- * collapses the visible UI to a thin status strip but keeps the
- * iframe alive (audio + PeerJS keep running).
- *
- * Scene metadata sync: whenever the GM-paired client mutates state
- * (track change, pause, etc) we write to OBR.scene.metadata. Every
- * other player's popover (if open) reads + plays. So multi-player
- * sync only requires each player to OPEN their music board popover
- * once. Players who never open it won't hear anything.
+ * State machine refinements (v6):
+ *   • audioUnlocked = false until the first click/touch inside the
+ *     popover. applyState NEVER calls .play() while locked — it just
+ *     stages the audio element (sets src + currentTime, leaves paused).
+ *   • DM role: skip the boot-time scene-metadata read entirely. They
+ *     pair fresh and the studio sends the live state on connect; any
+ *     stale entries from a previous session would only mislead them.
+ *   • PLAYER role: read boot metadata so mid-session join works.
+ *   • conn.open / conn.close: hardStop() — synchronous wipe of all
+ *     audio elements, sfxAudios map, lastBgmKey / lastSfxIds caches,
+ *     and currentState. Then applyState(DEFAULT) + writeSceneMusic(DEFAULT)
+ *     so other players' popovers also clear.
+ *   • Cleanup of stale SFX in applyState deletes from sfxAudios
+ *     SYNCHRONOUSLY before the fade-out setTimeout — so a user click
+ *     during the fade window can't accidentally re-play them.
  */
 import OBR from "@owlbear-rodeo/sdk";
+import { bindPanelDrag } from "./utils/panelDrag";
 
 const META_KEY = "com.obr-suite/music-board:state";
 const LS_VOL   = "obr-music-board:local-volumes";
@@ -32,14 +38,12 @@ interface BgmEntry {
   position: number; startedAt: number; paused: boolean;
 }
 interface SfxEntry { id: string; url: string; name: string; loop: boolean; }
-
 const DEFAULT_STATE: MusicState = {
   bgm: null, sfx: [], bus: { bgm: 0.8, sfx: 1.0 }, ts: 0,
 };
 
 // ---- DOM ------------------------------------------------------------
 const $ = <T extends Element = HTMLElement>(s: string) => document.querySelector(s) as T;
-
 const appEl       = $(".app");
 const npCard      = $("#npCard");
 const npStatus    = $("#npStatus");
@@ -54,12 +58,18 @@ const pairStatusEl = $("#pairStatus");
 const pairCodeEl  = $("#pairCode") as HTMLInputElement;
 const pairBtn     = $("#pairBtn") as HTMLButtonElement;
 const unpairBtn   = $("#unpairBtn") as HTMLButtonElement;
-const pairHint    = $("#pairHint");
 const minimizeBtn = $("#minimizeBtn") as HTMLButtonElement | null;
 const miniBar     = $("#miniBar");
-const miniTitle   = $("#miniTitle");
 const miniExpand  = $("#miniExpand") as HTMLButtonElement | null;
+const dragHandle  = $("#musicDragHandle") as HTMLElement | null;
+const dragHandleMini = $("#musicDragHandleMini") as HTMLElement | null;
 const toastStack  = $("#toastStack");
+
+// ---- Role + boot mode -----------------------------------------------
+const params = new URLSearchParams(location.search);
+const role: "GM" | "PLAYER" = params.get("role") === "PLAYER" ? "PLAYER" : "GM";
+const bootMinimized = params.get("mini") === "1";
+appEl.classList.toggle("role-player", role === "PLAYER");
 
 // ---- Local volume ---------------------------------------------------
 const localVol = { bgm: 0.8, sfx: 1.0, mute: false };
@@ -70,7 +80,6 @@ try {
   if (typeof v.mute === "boolean") localVol.mute = v.mute;
 } catch {}
 function saveLocalVol() { try { localStorage.setItem(LS_VOL, JSON.stringify(localVol)); } catch {} }
-
 bgmVol.value = String(Math.round(localVol.bgm * 100));
 sfxVol.value = String(Math.round(localVol.sfx * 100));
 muteChk.checked = localVol.mute;
@@ -135,6 +144,20 @@ bgmAudio.preload = "auto";
 bgmAudio.crossOrigin = "anonymous";
 const sfxAudios = new Map<string, HTMLAudioElement>();
 
+// ---- audioUnlocked gating ------------------------------------------
+//
+// `audioUnlocked` flips true on the FIRST user gesture inside this
+// popover. applyState() must never call .play() until it's true —
+// otherwise the play() promise rejects (autoplay policy) and the
+// audio gets stuck in a half-paused state that later unlock retries
+// have to clean up. With the flag, we just stage src+currentTime
+// while locked, then unlock fires play() with a valid gesture credit.
+let audioUnlocked = false;
+function tryPlay(a: HTMLAudioElement): Promise<void> {
+  if (!audioUnlocked) return Promise.resolve();
+  return a.play().catch(() => {});
+}
+
 function applyBgmVolume() {
   const chain = chainMap.get(bgmAudio);
   if (chain) rampGain(chain.busGain, busVolumeFor("bgm"), 120);
@@ -159,7 +182,25 @@ function livePosition(bgm: BgmEntry): number {
   return Math.max(0, bgm.position + (Date.now() - bgm.startedAt) / 1000);
 }
 
-// ---- State application ----------------------------------------------
+// ---- hardStop: nuke everything synchronously ----------------------
+function hardStop() {
+  try { bgmAudio.pause(); } catch {}
+  try { bgmAudio.currentTime = 0; } catch {}
+  if (bgmAudio.src.startsWith("blob:")) URL.revokeObjectURL(bgmAudio.src);
+  bgmAudio.removeAttribute("src");
+  try { bgmAudio.load(); } catch {}
+  for (const a of sfxAudios.values()) {
+    try { a.pause(); } catch {}
+  }
+  sfxAudios.clear();
+  lastBgmKey = "";
+  lastSfxIds = new Set();
+  currentState = structuredClone(DEFAULT_STATE);
+  renderUI();
+  updateDucking();
+}
+
+// ---- State application ---------------------------------------------
 let lastBgmKey = "";
 let lastSfxIds = new Set<string>();
 
@@ -182,7 +223,7 @@ async function applyState(next: MusicState) {
       bgmAudio.src = bgm.url;
       bgmAudio.loop = bgm.loop;
       bgmAudio.currentTime = Math.max(0, livePosition(bgm));
-      if (!bgm.paused) {
+      if (!bgm.paused && audioUnlocked) {
         try {
           await getCtx().resume();
           const c = ensureChain(bgmAudio, "bgm");
@@ -194,6 +235,7 @@ async function applyState(next: MusicState) {
           toast("浏览器拦截了自动播放，请点击页面任意位置允许", "warn");
         }
       }
+      // If locked OR paused: just leave bgmAudio paused with src loaded.
     } else {
       bgmAudio.removeAttribute("src");
       bgmAudio.load();
@@ -206,7 +248,7 @@ async function applyState(next: MusicState) {
         rampGain(chain.fadeGain, 0, FADE_OUT_MS);
         setTimeout(() => { try { bgmAudio.pause(); } catch {} }, FADE_OUT_MS + 20);
       } else { bgmAudio.pause(); }
-    } else if (!bgm.paused && bgmAudio.paused) {
+    } else if (!bgm.paused && bgmAudio.paused && audioUnlocked) {
       bgmAudio.currentTime = livePosition(bgm);
       try {
         await getCtx().resume();
@@ -216,23 +258,27 @@ async function applyState(next: MusicState) {
         rampGain(c.fadeGain, 1, FADE_IN_MS);
         updateDucking();
       } catch {}
-    } else if (!bgm.paused) {
+    } else if (!bgm.paused && audioUnlocked) {
       const target = livePosition(bgm);
       if (Math.abs(bgmAudio.currentTime - target) > 1.5) bgmAudio.currentTime = target;
     }
   }
 
-  // SFX diff
+  // SFX diff — SYNCHRONOUS sfxAudios.delete so unlockAudio's retry
+  // loop can't see stale entries that are mid-fade-out.
   const desired = new Set(next.sfx.map((s) => s.id));
   for (const id of lastSfxIds) {
     if (!desired.has(id)) {
       const a = sfxAudios.get(id);
       if (a) {
+        sfxAudios.delete(id);
         const c = chainMap.get(a);
         if (c) {
           rampGain(c.fadeGain, 0, FADE_OUT_MS);
-          setTimeout(() => { try { a.pause(); } catch {} sfxAudios.delete(id); updateDucking(); }, FADE_OUT_MS + 20);
-        } else { try { a.pause(); } catch {} sfxAudios.delete(id); }
+          setTimeout(() => { try { a.pause(); } catch {} updateDucking(); }, FADE_OUT_MS + 20);
+        } else {
+          try { a.pause(); } catch {}
+        }
       }
     }
   }
@@ -244,20 +290,23 @@ async function applyState(next: MusicState) {
         if (!a.loop) { sfxAudios.delete(s.id); updateDucking(); }
       });
       sfxAudios.set(s.id, a);
-      try {
-        await getCtx().resume();
-        const c = ensureChain(a, "sfx");
-        rampGain(c.fadeGain, 0, 0);
-        await a.play();
-        rampGain(c.fadeGain, 1, FADE_IN_MS);
-        updateDucking();
-      } catch {}
+      if (audioUnlocked) {
+        try {
+          await getCtx().resume();
+          const c = ensureChain(a, "sfx");
+          rampGain(c.fadeGain, 0, 0);
+          await a.play();
+          rampGain(c.fadeGain, 1, FADE_IN_MS);
+          updateDucking();
+        } catch {}
+      }
+      // If locked: SFX is queued (paused). unlock will retry play.
     }
   }
   lastSfxIds = desired;
 }
 
-// ---- Loop-boundary fade (rAF tick) ----------------------------------
+// ---- Loop-boundary fade -------------------------------------------
 function tickLoopFade() {
   requestAnimationFrame(tickLoopFade);
   if (!bgmAudio.loop || bgmAudio.paused) return;
@@ -327,7 +376,7 @@ async function writeSceneMusic(next: MusicState): Promise<void> {
   catch (e) { console.warn("[music-board] setMetadata failed", e); }
 }
 
-// ---- PeerJS bridge (popover-side) ----------------------------------
+// ---- PeerJS bridge (GM only — players don't pair) ------------------
 const PEER_PREFIX = "obr-music-";
 let peer: any = null;
 let peerConn: any = null;
@@ -360,11 +409,9 @@ async function connectPeer(code: string) {
         toast(`已连接到网页音乐板 ${code}`, "ok");
         pairBtn.style.display = "none";
         unpairBtn.style.display = "";
-        // Fresh-slate the scene metadata so stale BGM / SFX from a
-        // previous session don't replay the moment we pair. Studio
-        // sends its current state right after conn.open so we'll get
-        // the live picture filled in within a tick.
-        void applyState(structuredClone(DEFAULT_STATE));
+        // HARD STOP before studio's broadcastCurrentState lands.
+        // No stale BGM/SFX from previous sessions can leak through.
+        hardStop();
         void writeSceneMusic(structuredClone(DEFAULT_STATE));
       });
       conn.on("data", (data: any) => handlePeerMessage(data));
@@ -372,9 +419,9 @@ async function connectPeer(code: string) {
         setPairStatus("已断开", "error");
         pairBtn.style.display = "";
         unpairBtn.style.display = "none";
-        // Studio window closed (or network blip) — stop OBR playback
-        // and clear metadata so every player's popover also stops.
-        void applyState(structuredClone(DEFAULT_STATE));
+        // Studio tab closed / network blip — stop everything locally
+        // and clear scene metadata so other players also quiet down.
+        hardStop();
         void writeSceneMusic(structuredClone(DEFAULT_STATE));
       });
       conn.on("error", (e: any) => {
@@ -402,7 +449,7 @@ function disconnectPeer() {
   unpairBtn.style.display = "none";
 }
 function handlePeerMessage(msg: any) {
-  console.info("[music-board] peer msg", msg);
+  console.info("[music-board] peer msg", msg?.type);
   if (!msg || typeof msg !== "object") return;
   const next = structuredClone(currentState);
   switch (msg.type) {
@@ -454,18 +501,11 @@ function handlePeerMessage(msg: any) {
       break;
     default: return;
   }
-  // PRIORITY 1: apply locally NOW (the click that connected the peer
-  // counts as a user gesture, so the audio context is allowed to
-  // resume even though this isn't fired from a click handler).
-  void applyState(next);
-  // PRIORITY 2: persist to scene metadata so other players' popovers
-  // sync via their onMetadataChange listener. If the scene isn't
-  // ready, this silently fails — that's fine, we already applied
-  // locally so the GM still hears music.
-  void writeSceneMusic(next);
+  void applyState(next);     // Self
+  void writeSceneMusic(next); // Others
 }
 
-// ---- UI ---------------------------------------------------------
+// ---- UI -------------------------------------------------------------
 function fmtTime(s: number): string {
   if (!Number.isFinite(s) || s < 0) s = 0;
   const m = Math.floor(s / 60);
@@ -487,10 +527,8 @@ function renderUI() {
     npTitle.textContent = "没有 BGM 在播放";
     npTime.textContent = "--:-- / --:--";
   }
-  // Mini-bar mirror: just spin + dot, no track name (tiny icon-only).
   if (miniBar) miniBar.classList.toggle("playing", playing);
 }
-
 setInterval(() => {
   if (!currentState.bgm || currentState.bgm.paused) return;
   if (!bgmAudio.duration || isNaN(bgmAudio.duration)) {
@@ -500,16 +538,7 @@ setInterval(() => {
   }
 }, 500);
 
-// ---- Role + minimize toggle -----------------------------------------
-//
-// The opener (background module) stamps ?role=GM|PLAYER and ?mini=1
-// onto the popover URL. PLAYER popovers boot minimized (so the GM
-// hitting play doesn't slam UI across every player's screen).
-const params = new URLSearchParams(location.search);
-const role: "GM" | "PLAYER" = params.get("role") === "PLAYER" ? "PLAYER" : "GM";
-const bootMinimized = params.get("mini") === "1";
-appEl.classList.toggle("role-player", role === "PLAYER");
-
+// ---- Minimize toggle ------------------------------------------------
 let minimized = false;
 function setMinimized(state: boolean) {
   minimized = state;
@@ -517,7 +546,6 @@ function setMinimized(state: boolean) {
   else       appEl.classList.remove("minimized");
 }
 setMinimized(bootMinimized);
-
 minimizeBtn?.addEventListener("click", () => setMinimized(true));
 miniExpand?.addEventListener("click", () => setMinimized(false));
 miniBar?.addEventListener("click", (e) => {
@@ -525,7 +553,7 @@ miniBar?.addEventListener("click", (e) => {
   setMinimized(false);
 });
 
-// ---- User-controls wiring ------------------------------------------
+// ---- Volume + pair wiring ------------------------------------------
 bgmVol.addEventListener("input", () => {
   localVol.bgm = Number(bgmVol.value) / 100;
   if (bgmVolReadout) bgmVolReadout.textContent = bgmVol.value;
@@ -569,40 +597,73 @@ function toast(text: string, kind: "ok" | "warn" | "error" | "" = "") {
   }, 2400);
 }
 
-// ---- First-gesture audio unlock -------------------------------------
+// ---- First-gesture audio unlock ------------------------------------
 //
-// Player popovers boot minimized — the user might never click "pair"
-// or anything else, but they still need audio. WebAudio context can
-// only `resume()` after a user gesture IN this document, so we
-// install a capture-phase click/touch listener that fires on the
-// FIRST user interaction anywhere in the popover. After it fires:
-//   1. Force ctx.resume()
-//   2. Re-apply current state so the audio chain wires up properly
-//      and bgmAudio.play() can succeed without autoplay error.
-// One-shot — once unlocked, the listener removes itself.
-let audioUnlocked = false;
+// One-shot capture-phase listener. After it fires:
+//   1. ctx.resume()
+//   2. retry .play() on existing audio elements that SHOULD be playing
+//      per currentState (we never replay state — that's what caused
+//      the minimize-resurrects-stale-music bug).
 function unlockAudio() {
   if (audioUnlocked) return;
   audioUnlocked = true;
   document.removeEventListener("click", unlockAudio, true);
   document.removeEventListener("touchstart", unlockAudio, true);
-  // Resume the context (no-op if already running).
-  void getCtx().resume().catch(() => {});
-  // Re-apply current state so audio actually starts. We push lastBgmKey
-  // back so applyState's diff thinks the track is new and re-issues
-  // bgmAudio.play() — which now has the live gesture credit.
-  lastBgmKey = "";
-  void applyState(currentState);
+  void (async () => {
+    try { await getCtx().resume(); } catch {}
+    // BGM: retry only if state says it should be playing AND src is set.
+    if (currentState.bgm && !currentState.bgm.paused && bgmAudio.paused && bgmAudio.src) {
+      try {
+        const c = ensureChain(bgmAudio, "bgm");
+        rampGain(c.fadeGain, 0, 0);
+        await bgmAudio.play();
+        rampGain(c.fadeGain, 1, FADE_IN_MS);
+      } catch {}
+    }
+    // SFX: retry only ones currently in sfxAudios (stale entries
+    // were already sync-deleted by applyState).
+    for (const a of sfxAudios.values()) {
+      if (a.paused && a.src) {
+        try {
+          const c = ensureChain(a, "sfx");
+          rampGain(c.fadeGain, 0, 0);
+          await a.play();
+          rampGain(c.fadeGain, 1, FADE_IN_MS);
+        } catch {}
+      }
+    }
+    updateDucking();
+  })();
 }
 document.addEventListener("click",     unlockAudio, true);
 document.addEventListener("touchstart", unlockAudio, true);
 
+// ---- Drag handle wiring --------------------------------------------
+if (dragHandle) {
+  try { bindPanelDrag(dragHandle, "music-board"); } catch (e) {
+    console.warn("[music-board] bindPanelDrag failed", e);
+  }
+}
+if (dragHandleMini) {
+  try { bindPanelDrag(dragHandleMini, "music-board"); } catch (e) {
+    console.warn("[music-board] bindPanelDrag (mini) failed", e);
+  }
+}
+
 // ---- Boot ----------------------------------------------------------
 OBR.onReady(async () => {
-  // Initial scene-state pull + live subscription.
   try { await OBR.scene.isReady(); } catch {}
-  const s = await readSceneMusic();
-  await applyState(s);
+
+  // PLAYER reads boot metadata so mid-session join shows current track.
+  // GM SKIPS boot read — they pair fresh and the studio sends live state
+  // on connect; any stale entries from a previous session would just
+  // mislead the DM (and play silently into a locked context until
+  // their first click anyway).
+  if (role === "PLAYER") {
+    const s = await readSceneMusic();
+    await applyState(s);
+  }
+
   OBR.scene.onMetadataChange((meta) => {
     const raw = meta[META_KEY];
     if (!raw) { void applyState(structuredClone(DEFAULT_STATE)); return; }
