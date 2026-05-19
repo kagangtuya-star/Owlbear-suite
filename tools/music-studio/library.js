@@ -17,8 +17,16 @@
  *     // Origin metadata:
  *     origName: string  // original filename or URL
  *     trim?:    { start: number, end: number }  // seconds; only for blob entries
+ *     tags:     string[]  // virtual tags (战斗 / 探索 / Boss / 城镇 / ...); default []
  *     ts:       number  // creation timestamp
  *   }
+ *
+ * Tags are independent of `bus` — a track can be tagged 紧张 + 战斗 +
+ * Boss simultaneously and still belong to the BGM bus. The library
+ * panel's chip-row filter unions all tracks' tags into the available
+ * chip set; clicking a chip narrows the visible cards. Old entries
+ * (created before tags shipped) get tags=[] on read — handled at the
+ * call site to keep this layer schema-agnostic.
  *
  * Why IndexedDB: localStorage tops out at ~5 MB; a single 64 kbps OPUS
  * BGM clip is ~500 KB and we want to keep dozens. IDB blob storage is
